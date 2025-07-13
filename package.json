@@ -1,0 +1,11 @@
+{
+  "name": "video-downloader-bot",
+  "version": "1.0.0",
+  "description": "Video Downloader Bot with Netlify + Railway deployment",
+  "scripts": {
+    "update-api": "node update-api-url.js"
+  },
+  "keywords": ["video-downloader", "netlify", "railway", "deployment"],
+  "author": "Your Name",
+  "license": "MIT"
+} 

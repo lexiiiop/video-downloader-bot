@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Downloader Pro</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="logo">
+                <i class="fas fa-download"></i>
+                <h1>Video Downloader Pro</h1>
+            </div>
+            <p class="subtitle">Download videos from YouTube, Instagram, and more</p>
+        </header>
+
+        <main class="main-content">
+            <div class="input-section">
+                <div class="url-input-container">
+                    <input 
+                        type="url" 
+                        id="videoUrl" 
+                        placeholder="Paste video URL here (YouTube, Instagram, etc.)"
+                        class="url-input"
+                    >
+                    <button id="analyzeBtn" class="analyze-btn">
+                        <i class="fas fa-search"></i>
+                        Analyze
+                    </button>
+                </div>
+            </div>
+
+            <div id="loadingSection" class="loading-section hidden">
+                <div class="spinner"></div>
+                <p>Analyzing video...</p>
+            </div>
+
+            <div id="errorSection" class="error-section hidden">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p id="errorMessage"></p>
+            </div>
+
+            <div id="videoInfoSection" class="video-info-section hidden">
+                <div class="video-preview">
+                    <img id="videoThumbnail" src="" alt="Video thumbnail" class="thumbnail">
+                    <div class="video-details">
+                        <h3 id="videoTitle"></h3>
+                        <p id="videoDuration"></p>
+                    </div>
+                </div>
+
+                <div class="formats-section">
+                    <h3>Available Formats</h3>
+                    <div id="formatsList" class="formats-list">
+                        <!-- Formats will be populated here -->
+                    </div>
+                </div>
+            </div>
+
+            <div id="downloadSection" class="download-section hidden">
+                <div class="download-progress">
+                    <div class="progress-bar">
+                        <div id="progressFill" class="progress-fill"></div>
+                    </div>
+                    <p id="downloadStatus">Preparing download...</p>
+                </div>
+            </div>
+
+            <div id="successSection" class="success-section hidden">
+                <i class="fas fa-check-circle"></i>
+                <h3>Download Complete!</h3>
+                <p id="downloadInfo"></p>
+                <button id="downloadFileBtn" class="download-file-btn">
+                    <i class="fas fa-download"></i>
+                    Download File
+                </button>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <p>&copy; 2024 Video Downloader Pro. Built with ❤️ using Python & JavaScript</p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html> 
