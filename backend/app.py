@@ -26,13 +26,17 @@ DOWNLOADS_DIR.mkdir(exist_ok=True)
 def get_video_info(url):
     """Extract video information without downloading"""
     ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
+        'quiet': False,  # Enable logging for debugging
+        'no_warnings': False,  # Show warnings
+        'extract_flat': False,
     }
     
     try:
+        logger.info(f"Starting video info extraction for: {url}")
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            logger.info("yt-dlp instance created successfully")
             info = ydl.extract_info(url, download=False)
+            logger.info(f"Video info extracted successfully: {info.get('title', 'Unknown')}")
             
             # Get all available formats
             formats = info.get('formats', [])
