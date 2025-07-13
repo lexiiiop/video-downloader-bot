@@ -4,4 +4,4 @@ yt-dlp==2025.6.30
 requests==2.31.0
 python-dotenv==1.0.0
 urllib3==2.0.7
-instaloader==5.1.1 
+instaloader==4.14.1 
