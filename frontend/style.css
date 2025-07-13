@@ -21,9 +21,9 @@
     --on-secondary: #000000;
     
     /* Status Colors */
-    --success: #00ff00;
+    --success: #b0b0b0; /* gray instead of green */
     --error: #ff0000;
-    --warning: #ffff00;
+    --warning: #888888; /* gray instead of yellow */
     
     /* Glassmorphism */
     --glass-bg: rgba(255, 255, 255, 0.05);
@@ -89,6 +89,43 @@ body {
     min-height: 100vh;
     overflow-x: hidden;
     position: relative;
+    cursor: url('cursors/Normal Select.cur'), auto;
+}
+
+button, a, .option-card, select, .download-link-btn {
+    cursor: url('cursors/Link Select.cur'), pointer;
+}
+
+input, textarea {
+    cursor: url('cursors/Text Select.cur'), text;
+}
+
+[contenteditable="true"] {
+    cursor: url('cursors/Text Select.cur'), text;
+}
+
+.move, .draggable {
+    cursor: url('cursors/Move.cur'), move;
+}
+
+.resize-ew {
+    cursor: url('cursors/Horizontal Resize.cur'), ew-resize;
+}
+
+.resize-ns {
+    cursor: url('cursors/Vertical Resize.cur'), ns-resize;
+}
+
+.resize-nesw {
+    cursor: url('cursors/Diagonal Resize 1.cur'), nesw-resize;
+}
+
+.resize-nwse {
+    cursor: url('cursors/Diagonal Resize 2.cur'), nwse-resize;
+}
+
+.not-allowed, [disabled], .download-btn:disabled, .detect-btn:disabled {
+    cursor: url('cursors/Unavailable.cur'), not-allowed;
 }
 
 /* Background Animation */
@@ -698,8 +735,8 @@ body {
     display: flex;
     align-items: center;
     gap: var(--spacing-sm);
-    background: rgba(255, 255, 0, 0.1);
-    border: 1px solid rgba(255, 255, 0, 0.3);
+    background: rgba(136, 136, 136, 0.1); /* gray background */
+    border: 1px solid rgba(136, 136, 136, 0.3); /* gray border */
     padding: var(--spacing-md);
     border-radius: var(--radius-md);
     margin-bottom: var(--spacing-lg);
@@ -721,7 +758,7 @@ body {
     align-items: center;
     justify-content: center;
     gap: var(--spacing-sm);
-    background: var(--success);
+    background: var(--success); /* gray */
     color: var(--on-primary);
     text-decoration: none;
     padding: var(--spacing-md) var(--spacing-lg);
@@ -732,7 +769,7 @@ body {
 }
 
 .download-link-btn:hover {
-    background: #00cc00;
+    background: #888888; /* darker gray */
     transform: translateY(-2px);
     box-shadow: var(--shadow-md);
 }
@@ -823,6 +860,84 @@ body {
     to {
         opacity: 1;
     }
+}
+
+/* --- Smooth UI Enhancements --- */
+
+/* Add smooth transitions to all interactive elements */
+button, a, .option-card, .glass-card, .download-btn, .premium-btn, .quality-select, .url-input-wrapper, .input-section, .progress-card, .result-card, .error-card, .thumbnail-container, .video-title, .platform-badge {
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Card hover/active effects */
+.option-card:hover, .glass-card:hover, .preview-card:hover {
+    box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+    transform: translateY(-6px) scale(1.025);
+    border-color: var(--primary);
+}
+
+/* Button hover/active effects */
+button:not(:disabled):hover, .download-btn:not(:disabled):hover, .premium-btn:not(:disabled):hover {
+    filter: brightness(1.08) drop-shadow(0 2px 8px rgba(0,0,0,0.15));
+    transform: translateY(-2px) scale(1.03);
+}
+button:active, .download-btn:active, .premium-btn:active {
+    filter: brightness(0.95);
+    transform: scale(0.98);
+}
+
+/* Dropdown smoothness */
+.quality-select {
+    transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+}
+.quality-select:focus {
+    box-shadow: 0 0 0 4px rgba(255,255,255,0.08);
+}
+
+/* Thumbnail overlay smooth fade/slide */
+.thumbnail-overlay {
+    opacity: 0.92;
+    transform: translateY(20px);
+    transition: opacity 0.3s, transform 0.3s;
+}
+.thumbnail-container:hover .thumbnail-overlay {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Video title smooth pop */
+.video-title {
+    transition: color 0.2s, text-shadow 0.2s, transform 0.2s;
+}
+.thumbnail-container:hover .video-title {
+    color: var(--primary);
+    text-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    transform: scale(1.04);
+}
+
+/* Platform badge pop */
+.platform-badge {
+    transition: background 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+.platform-badge:hover {
+    background: var(--primary-container);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    transform: scale(1.04);
+}
+
+/* Section fade-in animation */
+@keyframes smoothFadeIn {
+    from { opacity: 0; transform: translateY(30px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.main-content > * {
+    animation: smoothFadeIn 0.7s cubic-bezier(0.4,0,0.2,1) both;
+}
+
+/* Remove outline on click but keep for keyboard nav */
+button:focus:not(:focus-visible), .download-btn:focus:not(:focus-visible), .premium-btn:focus:not(:focus-visible), .quality-select:focus:not(:focus-visible), .url-input:focus:not(:focus-visible) {
+    outline: none;
+    box-shadow: none;
 }
 
 /* Responsive Design */
