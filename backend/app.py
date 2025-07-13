@@ -90,7 +90,13 @@ def sanitize_filename(filename):
 def get_video_info(url):
     """Extract video information without downloading"""
     if is_instagram_url(url):
-        return get_instagram_info(url)
+        # Try cloudscraper first, then fallback to yt-dlp
+        try:
+            return get_instagram_info(url)
+        except Exception as e:
+            logger.warning(f"Cloudscraper failed for Instagram: {e}")
+            logger.info("Trying yt-dlp as fallback for Instagram...")
+            return get_instagram_info_ytdlp(url)
     
     # Use yt-dlp for other platforms
     ydl_opts = {
@@ -170,46 +176,99 @@ def get_instagram_info(url):
         # Extract video URL from page content
         content = response.text
         
-        # Look for video URL patterns
+        # Look for video URL patterns (updated for modern Instagram)
         video_patterns = [
             r'"video_url":"([^"]+)"',
             r'"contentUrl":"([^"]+\.mp4[^"]*)"',
+            r'"video_url":"([^"]+\.mp4[^"]*)"',
+            r'"video_url":"([^"]+\.mov[^"]*)"',
+            r'"video_url":"([^"]+\.webm[^"]*)"',
             r'src="([^"]+\.mp4[^"]*)"',
             r'<video[^>]*src="([^"]+)"',
+            r'"playbackUrl":"([^"]+)"',
+            r'"mediaUrl":"([^"]+\.mp4[^"]*)"',
+            r'"mediaUrl":"([^"]+\.mov[^"]*)"',
+            r'"mediaUrl":"([^"]+\.webm[^"]*)"',
+            r'"url":"([^"]+\.mp4[^"]*)"',
+            r'"url":"([^"]+\.mov[^"]*)"',
+            r'"url":"([^"]+\.webm[^"]*)"',
         ]
         
         video_url = None
         for pattern in video_patterns:
-            match = re.search(pattern, content)
-            if match:
-                video_url = match.group(1)
-                video_url = video_url.replace('\\u0026', '&')
+            matches = re.findall(pattern, content)
+            for match in matches:
+                if match and ('mp4' in match or 'mov' in match or 'webm' in match):
+                    video_url = match
+                    video_url = video_url.replace('\\u0026', '&')
+                    video_url = video_url.replace('\\/', '/')
+                    logger.info(f"Found video URL with pattern: {pattern}")
+                    break
+            if video_url:
                 break
         
         if not video_url:
             # Try alternative method - get post data from Instagram API
             post_id = get_instagram_post_id(url)
             if post_id:
+                logger.info(f"Trying Instagram API for post ID: {post_id}")
                 api_url = f"https://www.instagram.com/p/{post_id}/?__a=1&__d=dis"
                 api_response = session.get(api_url)
                 if api_response.status_code == 200:
                     try:
                         data = api_response.json()
+                        logger.info(f"API response keys: {list(data.keys())}")
+                        
+                        # Try different API response structures
                         if 'graphql' in data and 'shortcode_media' in data['graphql']:
                             media = data['graphql']['shortcode_media']
                             if media.get('is_video'):
                                 video_url = media.get('video_url')
-                    except:
-                        pass
+                                logger.info("Found video URL via graphql API")
+                        elif 'items' in data and len(data['items']) > 0:
+                            item = data['items'][0]
+                            if item.get('media_type') == 2:  # Video type
+                                video_url = item.get('video_versions', [{}])[0].get('url')
+                                logger.info("Found video URL via items API")
+                        elif 'shortcode_media' in data:
+                            media = data['shortcode_media']
+                            if media.get('is_video'):
+                                video_url = media.get('video_url')
+                                logger.info("Found video URL via shortcode_media API")
+                    except Exception as e:
+                        logger.error(f"Error parsing API response: {e}")
         
         if not video_url:
+            # Try one more method - look for JSON-LD structured data
+            json_ld_pattern = r'<script type="application/ld\+json">(.*?)</script>'
+            json_ld_matches = re.findall(json_ld_pattern, content, re.DOTALL)
+            for json_ld in json_ld_matches:
+                try:
+                    json_data = json.loads(json_ld)
+                    if isinstance(json_data, dict):
+                        # Look for video content in JSON-LD
+                        if 'contentUrl' in json_data:
+                            potential_url = json_data['contentUrl']
+                            if any(ext in potential_url for ext in ['.mp4', '.mov', '.webm']):
+                                video_url = potential_url
+                                logger.info("Found video URL via JSON-LD")
+                                break
+                except:
+                    continue
+        
+        if not video_url:
+            # Log some debug info
+            logger.error("Could not find video URL. Content preview:")
+            logger.error(content[:1000])  # First 1000 chars for debugging
             raise Exception("Could not find video URL in Instagram post")
         
         # Get post caption/title
         title_patterns = [
             r'"caption":"([^"]+)"',
             r'<meta property="og:title" content="([^"]+)"',
-            r'<title>([^<]+)</title>'
+            r'<title>([^<]+)</title>',
+            r'"title":"([^"]+)"',
+            r'"description":"([^"]+)"',
         ]
         
         title = "Instagram Post"
@@ -218,6 +277,9 @@ def get_instagram_info(url):
             if match:
                 title = match.group(1)
                 title = title.replace('\\n', ' ').replace('\\r', ' ')
+                title = title.replace('\\/', '/')
+                if len(title) > 100:
+                    title = title[:100] + "..."
                 break
         
         # Create format info
@@ -234,6 +296,7 @@ def get_instagram_info(url):
             'url': video_url
         }
         
+        logger.info(f"Successfully extracted Instagram video: {title}")
         return {
             'title': title,
             'duration': 0,
@@ -243,6 +306,72 @@ def get_instagram_info(url):
         
     except Exception as e:
         logger.error(f"Error getting Instagram info: {str(e)}")
+        raise Exception(f"Instagram error: {str(e)}")
+
+def get_instagram_info_ytdlp(url):
+    """Get Instagram post information using yt-dlp as fallback"""
+    try:
+        logger.info(f"Using yt-dlp for Instagram: {url}")
+        
+        ydl_opts = {
+            'quiet': False,
+            'no_warnings': False,
+            'extract_flat': False,
+        }
+        
+        # Use Instagram cookies if available
+        if os.path.exists(INSTAGRAM_COOKIES_FILE):
+            ydl_opts['cookiefile'] = INSTAGRAM_COOKIES_FILE
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
+            if not info:
+                raise Exception("yt-dlp could not extract Instagram info")
+            
+            # Process formats
+            formats = info.get('formats', [])
+            processed_formats = []
+            
+            for fmt in formats:
+                if fmt.get('ext') in ['mp4', 'webm', 'mov']:
+                    processed_formats.append({
+                        'format_id': fmt.get('format_id', 'best'),
+                        'ext': fmt.get('ext', 'mp4'),
+                        'filesize': fmt.get('filesize', 0),
+                        'height': fmt.get('height', 1080),
+                        'width': fmt.get('width', 1920),
+                        'format_note': fmt.get('format_note', 'Best Quality'),
+                        'vcodec': fmt.get('vcodec', 'h264'),
+                        'acodec': fmt.get('acodec', 'aac'),
+                        'has_audio': True,
+                        'url': fmt.get('url', '')
+                    })
+            
+            if not processed_formats:
+                # Create a default format
+                processed_formats.append({
+                    'format_id': 'best',
+                    'ext': 'mp4',
+                    'filesize': 0,
+                    'height': 1080,
+                    'width': 1920,
+                    'format_note': 'Best Quality',
+                    'vcodec': 'h264',
+                    'acodec': 'aac',
+                    'has_audio': True,
+                    'url': ''
+                })
+            
+            return {
+                'title': info.get('title', 'Instagram Post'),
+                'duration': info.get('duration', 0),
+                'thumbnail': info.get('thumbnail', ''),
+                'formats': processed_formats
+            }
+            
+    except Exception as e:
+        logger.error(f"yt-dlp fallback failed for Instagram: {str(e)}")
         raise Exception(f"Instagram error: {str(e)}")
 
 def download_video_advanced(url, format_type, title, download_id):
