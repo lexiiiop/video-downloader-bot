@@ -10,6 +10,7 @@ class LumenDownloader {
         this.initializeElements();
         this.bindEvents();
         this.setupAutoDetection();
+        this.setupCustomCursor();
     }
 
     initializeElements() {
@@ -21,6 +22,11 @@ class LumenDownloader {
         this.platformInfo = document.getElementById('platformInfo');
         this.platformIcon = this.platformInfo.querySelector('.platform-icon');
         this.platformName = this.platformInfo.querySelector('.platform-name');
+        
+        // Video preview
+        this.videoPreview = document.getElementById('videoPreview');
+        this.videoThumbnail = document.getElementById('videoThumbnail');
+        this.videoTitle = document.getElementById('videoTitle');
         
         // Sections
         this.downloadOptions = document.getElementById('downloadOptions');
@@ -40,6 +46,35 @@ class LumenDownloader {
         
         // Error elements
         this.errorMessage = this.errorSection.querySelector('.error-message');
+        
+        // Quality selectors
+        this.videoQualitySelect = document.getElementById('videoQualitySelect');
+        this.audioQualitySelect = document.getElementById('audioQualitySelect');
+        this.videoOnlyQualitySelect = document.getElementById('videoOnlyQualitySelect');
+    }
+
+    setupCustomCursor() {
+        // Create custom cursor element
+        const cursor = document.createElement('div');
+        cursor.className = 'custom-cursor';
+        document.body.appendChild(cursor);
+
+        // Track mouse movement
+        document.addEventListener('mousemove', (e) => {
+            cursor.style.left = e.clientX + 'px';
+            cursor.style.top = e.clientY + 'px';
+        });
+
+        // Add hover effect for interactive elements
+        const interactiveElements = document.querySelectorAll('button, input, select, a, .option-card');
+        interactiveElements.forEach(el => {
+            el.addEventListener('mouseenter', () => {
+                cursor.classList.add('hover');
+            });
+            el.addEventListener('mouseleave', () => {
+                cursor.classList.remove('hover');
+            });
+        });
     }
 
     bindEvents() {
@@ -54,6 +89,22 @@ class LumenDownloader {
         document.querySelectorAll('.download-btn').forEach(btn => {
             btn.addEventListener('click', (e) => this.handleDownload(e));
         });
+        
+        // Quality selector events
+        this.videoQualitySelect.addEventListener('change', () => this.handleQualityChange('video'));
+        this.audioQualitySelect.addEventListener('change', () => this.handleQualityChange('audio'));
+        this.videoOnlyQualitySelect.addEventListener('change', () => this.handleQualityChange('video_only'));
+    }
+
+    handleQualityChange(format) {
+        const select = this[`${format}QualitySelect`];
+        const button = select.closest('.option-card').querySelector('.download-btn');
+        
+        if (select.value) {
+            button.disabled = false;
+        } else {
+            button.disabled = true;
+        }
     }
 
     setupAutoDetection() {
@@ -199,7 +250,7 @@ class LumenDownloader {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ url: url })
+                body: JSON.stringify({ url })
             });
 
             if (!response.ok) {
@@ -213,46 +264,89 @@ class LumenDownloader {
             }
 
             this.videoInfo = data;
-            this.showProgress('Video analyzed successfully!', 100);
+            this.showVideoPreview(data);
+            this.populateQualityOptions(data);
+            this.showDownloadOptions();
             
-            // Show download options after a brief delay
-            setTimeout(() => {
-                this.showDownloadOptions();
-            }, 500);
-
         } catch (error) {
             console.error('Error getting video info:', error);
             this.showError(`Failed to analyze video: ${error.message}`);
         }
     }
 
-    async handleDownload(event) {
-        const format = event.currentTarget.dataset.format;
-        const button = event.currentTarget;
+    showVideoPreview(info) {
+        if (info.thumbnail) {
+            this.videoThumbnail.src = info.thumbnail;
+            this.videoThumbnail.style.display = 'block';
+        } else {
+            this.videoThumbnail.style.display = 'none';
+        }
         
-        // Disable all download buttons
-        document.querySelectorAll('.download-btn').forEach(btn => {
-            btn.disabled = true;
-            btn.style.opacity = '0.5';
+        this.videoTitle.textContent = info.title || 'Unknown Title';
+        this.videoPreview.classList.remove('hidden');
+    }
+
+    populateQualityOptions(info) {
+        const formats = info.formats || [];
+        
+        // Clear existing options
+        this.videoQualitySelect.innerHTML = '<option value="">Select quality...</option>';
+        this.audioQualitySelect.innerHTML = '<option value="">Select quality...</option>';
+        this.videoOnlyQualitySelect.innerHTML = '<option value="">Select quality...</option>';
+        
+        // Populate video formats (with audio)
+        const videoFormats = formats.filter(fmt => 
+            fmt.has_audio && fmt.ext && ['mp4', 'webm', 'mkv'].includes(fmt.ext)
+        );
+        videoFormats.forEach(fmt => {
+            const option = document.createElement('option');
+            option.value = fmt.format_id;
+            option.textContent = `${fmt.height}p ${fmt.ext.toUpperCase()} (${this.formatFileSize(fmt.filesize)})`;
+            this.videoQualitySelect.appendChild(option);
         });
         
-        try {
-            await this.startDownload(format);
-        } catch (error) {
-            console.error('Download error:', error);
-            this.showError(`Download failed: ${error.message}`);
-            
-            // Re-enable buttons
-            document.querySelectorAll('.download-btn').forEach(btn => {
-                btn.disabled = false;
-                btn.style.opacity = '1';
-            });
+        // Populate audio formats
+        const audioFormats = formats.filter(fmt => 
+            fmt.acodec && fmt.acodec !== 'none' && !fmt.vcodec
+        );
+        audioFormats.forEach(fmt => {
+            const option = document.createElement('option');
+            option.value = fmt.format_id;
+            option.textContent = `${fmt.ext.toUpperCase()} Audio (${this.formatFileSize(fmt.filesize)})`;
+            this.audioQualitySelect.appendChild(option);
+        });
+        
+        // Populate video-only formats
+        const videoOnlyFormats = formats.filter(fmt => 
+            fmt.vcodec && fmt.vcodec !== 'none' && (!fmt.acodec || fmt.acodec === 'none')
+        );
+        videoOnlyFormats.forEach(fmt => {
+            const option = document.createElement('option');
+            option.value = fmt.format_id;
+            option.textContent = `${fmt.height}p ${fmt.ext.toUpperCase()} Video Only (${this.formatFileSize(fmt.filesize)})`;
+            this.videoOnlyQualitySelect.appendChild(option);
+        });
+    }
+
+    async handleDownload(event) {
+        const button = event.currentTarget;
+        const format = button.dataset.format;
+        
+        if (format === 'best') {
+            await this.startDownload('best');
+        } else {
+            const select = this[`${format}QualitySelect`];
+            if (select.value) {
+                await this.startDownload(select.value);
+            } else {
+                this.showError('Please select a quality option first.');
+            }
         }
     }
 
     async startDownload(format) {
         try {
-            this.showProgress('Initializing download...', 5);
+            this.showProgress('Starting download...', 0);
             
             const response = await fetch(`${this.apiUrl}/download`, {
                 method: 'POST',
@@ -262,7 +356,7 @@ class LumenDownloader {
                 body: JSON.stringify({
                     url: this.currentUrl,
                     format: format,
-                    title: this.videoInfo?.title || 'video'
+                    title: this.videoInfo.title
                 })
             });
 
@@ -277,19 +371,17 @@ class LumenDownloader {
             }
 
             this.downloadId = data.download_id;
-            this.showProgress('Download started...', 10);
-            
-            // Start progress tracking
             this.trackProgress();
-
+            
         } catch (error) {
-            throw new Error(`Failed to start download: ${error.message}`);
+            console.error('Error starting download:', error);
+            this.showError(`Failed to start download: ${error.message}`);
         }
     }
 
     async trackProgress() {
         if (!this.downloadId) return;
-
+        
         this.progressInterval = setInterval(async () => {
             try {
                 const response = await fetch(`${this.apiUrl}/progress/${this.downloadId}`);
@@ -304,42 +396,32 @@ class LumenDownloader {
                     throw new Error(data.error);
                 }
 
-                const progress = data.progress || 0;
-                const status = data.status === 'completed' ? 'Download completed!' : (data.status || 'Downloading...');
-                
-                this.updateProgress(progress, status);
-
                 if (data.status === 'completed') {
                     clearInterval(this.progressInterval);
                     this.handleDownloadComplete(data);
-                }
-
-            } catch (error) {
-                console.error('Progress tracking error:', error);
-                clearInterval(this.progressInterval);
-                
-                // Check if it's a 404 error (download not found)
-                if (error.message.includes('404')) {
-                    this.showError('Download not found. Please try again.');
+                } else if (data.status === 'error') {
+                    clearInterval(this.progressInterval);
+                    this.showError(data.error || 'Download failed');
                 } else {
-                    this.showError(`Progress tracking failed: ${error.message}`);
+                    this.updateProgress(data.progress || 0, data.status || 'downloading');
                 }
+                
+            } catch (error) {
+                console.error('Error tracking progress:', error);
+                clearInterval(this.progressInterval);
+                this.showError(`Progress tracking failed: ${error.message}`);
             }
         }, 1000);
     }
 
     updateProgress(percentage, status) {
         this.progressFill.style.width = `${percentage}%`;
-        this.progressText.textContent = `${Math.round(percentage)}%`;
-        this.progressStatus.textContent = status;
+        this.progressText.textContent = `${percentage}%`;
+        this.progressStatus.textContent = status === 'downloading' ? 'Downloading...' : status;
     }
 
     handleDownloadComplete(data) {
-        this.showProgress('Download completed!', 100);
-        
-        setTimeout(() => {
-            this.showResult(data);
-        }, 500);
+        this.showResult(data);
     }
 
     showProgress(status, percentage = 0) {
@@ -349,32 +431,19 @@ class LumenDownloader {
     }
 
     showDownloadOptions() {
-        this.hideAllSections();
         this.downloadOptions.classList.remove('hidden');
-        
-        // Re-enable download buttons
-        document.querySelectorAll('.download-btn').forEach(btn => {
-            btn.disabled = false;
-            btn.style.opacity = '1';
-        });
     }
 
     showResult(data) {
         this.hideAllSections();
         this.resultSection.classList.remove('hidden');
         
-        // Set file information
-        this.fileName.textContent = data.filename || 'Downloaded File';
-        this.fileSize.textContent = data.file_size ? `Size: ${this.formatFileSize(data.file_size)}` : '';
-        
-        // Set download link using the stored download ID
+        // Set download link
         this.downloadLink.href = `${this.apiUrl}/file/${this.downloadId}`;
-        this.downloadLink.download = data.filename || 'video.mp4';
         
-        // Auto-download after 2 seconds
-        setTimeout(() => {
-            this.downloadLink.click();
-        }, 2000);
+        // Set file info
+        this.fileName.textContent = this.videoInfo.title || 'Downloaded File';
+        this.fileSize.textContent = data.filesize ? this.formatFileSize(data.filesize) : 'Unknown size';
     }
 
     showError(message) {
@@ -388,21 +457,19 @@ class LumenDownloader {
         this.progressSection.classList.add('hidden');
         this.resultSection.classList.add('hidden');
         this.errorSection.classList.add('hidden');
+        this.videoPreview.classList.add('hidden');
     }
 
     formatFileSize(bytes) {
-        if (bytes === 0) return '0 Bytes';
+        if (!bytes || bytes === 0) return 'Unknown size';
         
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
     }
 
     resetUI() {
         this.hideAllSections();
-        this.platformInfo.classList.add('hidden');
         this.urlInput.value = '';
         this.detectBtn.disabled = true;
         this.currentUrl = '';
@@ -413,58 +480,17 @@ class LumenDownloader {
             clearInterval(this.progressInterval);
             this.progressInterval = null;
         }
-        
-        // Re-enable all buttons
-        document.querySelectorAll('.download-btn').forEach(btn => {
-            btn.disabled = false;
-            btn.style.opacity = '1';
-        });
     }
 }
 
-// Global function for retry button
+// Initialize the app
+document.addEventListener('DOMContentLoaded', () => {
+    new LumenDownloader();
+});
+
+// Global reset function
 function resetUI() {
     if (window.lumenDownloader) {
         window.lumenDownloader.resetUI();
     }
-}
-
-// Initialize the application
-document.addEventListener('DOMContentLoaded', () => {
-    window.lumenDownloader = new LumenDownloader();
-    
-    // Add some nice loading animations
-    document.body.style.opacity = '0';
-    setTimeout(() => {
-        document.body.style.transition = 'opacity 0.5s ease-in-out';
-        document.body.style.opacity = '1';
-    }, 100);
-});
-
-// Add keyboard shortcuts
-document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey || e.metaKey) {
-        switch (e.key) {
-            case 'v':
-                // Auto-detect on paste
-                setTimeout(() => {
-                    if (window.lumenDownloader && window.lumenDownloader.isValidUrl(window.lumenDownloader.urlInput.value)) {
-                        window.lumenDownloader.detectPlatform();
-                    }
-                }, 100);
-                break;
-            case 'r':
-                // Reset UI
-                e.preventDefault();
-                resetUI();
-                break;
-        }
-    }
-    
-    // Enter key to detect platform
-    if (e.key === 'Enter' && document.activeElement === window.lumenDownloader?.urlInput) {
-        if (window.lumenDownloader && window.lumenDownloader.isValidUrl(window.lumenDownloader.urlInput.value)) {
-            window.lumenDownloader.detectPlatform();
-        }
-    }
-}); 
+} 

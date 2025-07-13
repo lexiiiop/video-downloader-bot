@@ -52,6 +52,18 @@
                 </div>
             </div>
 
+            <!-- Video Preview Section -->
+            <div id="videoPreview" class="video-preview hidden">
+                <div class="preview-card glass-card">
+                    <div class="thumbnail-container">
+                        <img id="videoThumbnail" class="video-thumbnail" src="" alt="Video thumbnail">
+                        <div class="thumbnail-overlay">
+                            <h3 id="videoTitle" class="video-title"></h3>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Download Options -->
             <div id="downloadOptions" class="download-options hidden">
                 <h2 class="section-title">Choose Your Format</h2>
@@ -78,7 +90,12 @@
                             <h3>Video Only</h3>
                         </div>
                         <p class="option-description">High-quality video with audio</p>
-                        <button class="download-btn" data-format="video">
+                        <div class="quality-selector">
+                            <select id="videoQualitySelect" class="quality-select">
+                                <option value="">Select quality...</option>
+                            </select>
+                        </div>
+                        <button class="download-btn" data-format="video" disabled>
                             <span class="material-symbols-outlined">download</span>
                             Download Video
                         </button>
@@ -90,7 +107,12 @@
                             <h3>Audio Only</h3>
                         </div>
                         <p class="option-description">Extract audio in best quality</p>
-                        <button class="download-btn" data-format="audio">
+                        <div class="quality-selector">
+                            <select id="audioQualitySelect" class="quality-select">
+                                <option value="">Select quality...</option>
+                            </select>
+                        </div>
+                        <button class="download-btn" data-format="audio" disabled>
                             <span class="material-symbols-outlined">download</span>
                             Download Audio
                         </button>
@@ -102,7 +124,12 @@
                             <h3>Ultra HD Video</h3>
                         </div>
                         <p class="option-description">Maximum video quality (no audio)</p>
-                        <button class="download-btn" data-format="video_only">
+                        <div class="quality-selector">
+                            <select id="videoOnlyQualitySelect" class="quality-select">
+                                <option value="">Select quality...</option>
+                            </select>
+                        </div>
+                        <button class="download-btn" data-format="video_only" disabled>
                             <span class="material-symbols-outlined">download</span>
                             Download Ultra HD
                         </button>
