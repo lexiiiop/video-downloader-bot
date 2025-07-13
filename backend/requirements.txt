@@ -1,6 +1,6 @@
 Flask==2.3.3
 Flask-CORS==4.0.0
-yt-dlp==2023.12.30
+yt-dlp==2024.12.13
 python-dotenv==1.0.0
 urllib3>=2.5.0,<3.0.0
 cloudscraper==1.2.71

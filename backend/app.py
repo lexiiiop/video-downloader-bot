@@ -317,6 +317,11 @@ def get_instagram_info_ytdlp(url):
             'quiet': False,
             'no_warnings': False,
             'extract_flat': False,
+            'nocheckcertificate': True,
+            'geo_bypass': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
         }
         
         # Use Instagram cookies if available
@@ -380,13 +385,24 @@ def download_video_advanced(url, format_type, title, download_id):
         if is_instagram_url(url):
             return download_instagram_video(url, format_type, title, download_id)
         
-        # Use yt-dlp for other platforms
+        # Use yt-dlp for other platforms with improved options
         ydl_opts = {
             'format': format_type,
             'outtmpl': str(DOWNLOADS_DIR / f'{download_id}.%(ext)s'),
             'progress_hooks': [lambda d: progress_hook(d, download_id)],
             'quiet': False,
             'no_warnings': False,
+            # Add options to bypass restrictions
+            'nocheckcertificate': True,
+            'ignoreerrors': False,
+            'no_color': True,
+            'geo_bypass': True,
+            'geo_bypass_country': 'US',
+            'geo_bypass_ip_block': '1.0.0.1',
+            # Add user agent to avoid blocks
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
         }
         
         if os.path.exists('cookies.txt'):
@@ -400,6 +416,7 @@ def download_video_advanced(url, format_type, title, download_id):
             if file_path.is_file():
                 download_files[download_id] = str(file_path)
                 download_progress[download_id] = {'status': 'completed', 'progress': 100}
+                logger.info(f"Download completed: {file_path}")
                 return True
         
         raise Exception("Download completed but file not found")
@@ -452,6 +469,7 @@ def download_instagram_video(url, format_type, title, download_id):
         
         download_files[download_id] = str(file_path)
         download_progress[download_id] = {'status': 'completed', 'progress': 100}
+        logger.info(f"Instagram download completed: {file_path}")
         return True
         
     except Exception as e:
@@ -554,6 +572,35 @@ def get_progress(download_id):
         logger.error(f"Error in get_progress: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({'status': 'healthy'})
+
+@app.route('/api/test', methods=['GET'])
+def test_endpoint():
+    """Test endpoint to check file system and downloads"""
+    try:
+        # Check if downloads directory exists
+        downloads_exist = DOWNLOADS_DIR.exists()
+        downloads_files = list(DOWNLOADS_DIR.glob('*')) if downloads_exist else []
+        
+        # Check current downloads
+        current_downloads = len(download_files)
+        current_progress = len(download_progress)
+        
+        return jsonify({
+            'status': 'test_ok',
+            'downloads_dir_exists': downloads_exist,
+            'downloads_dir_files': len(downloads_files),
+            'current_downloads': current_downloads,
+            'current_progress': current_progress,
+            'download_files': list(download_files.keys()),
+            'progress_files': list(download_progress.keys())
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/file/<download_id>', methods=['GET'])
 def serve_file(download_id):
     """Serve downloaded file"""
@@ -563,7 +610,16 @@ def serve_file(download_id):
         
         file_path = Path(download_files[download_id])
         if not file_path.exists():
-            return jsonify({'error': 'File not found'}), 404
+            logger.error(f"File not found on disk: {file_path}")
+            return jsonify({'error': 'File not found on disk'}), 404
+        
+        # Check file size
+        file_size = file_path.stat().st_size
+        if file_size == 0:
+            logger.error(f"File is empty: {file_path}")
+            return jsonify({'error': 'File is empty'}), 400
+        
+        logger.info(f"Serving file: {file_path} (size: {file_size} bytes)")
         
         # Schedule file deletion after serving
         threading.Timer(60.0, delete_file, args=[download_id]).start()
@@ -571,17 +627,13 @@ def serve_file(download_id):
         return send_file(
             file_path,
             as_attachment=True,
-            download_name=file_path.name
+            download_name=file_path.name,
+            mimetype='application/octet-stream'
         )
         
     except Exception as e:
         logger.error(f"Error in serve_file: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    return jsonify({'status': 'healthy'})
 
 def cleanup_old_files():
     """Clean up old downloaded files"""
