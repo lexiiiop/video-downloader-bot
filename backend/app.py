@@ -408,17 +408,27 @@ def download_video_advanced(url, format_type, title, download_id):
         if os.path.exists('cookies.txt'):
             ydl_opts['cookiefile'] = 'cookies.txt'
         
+        logger.info(f"Starting download with ID: {download_id}")
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
         
         # Find the downloaded file
+        logger.info(f"Looking for downloaded file with ID: {download_id}")
         for file_path in DOWNLOADS_DIR.glob(f'{download_id}.*'):
             if file_path.is_file():
+                file_size = file_path.stat().st_size
+                logger.info(f"Found downloaded file: {file_path} (size: {file_size} bytes)")
                 download_files[download_id] = str(file_path)
-                download_progress[download_id] = {'status': 'completed', 'progress': 100}
-                logger.info(f"Download completed: {file_path}")
+                download_progress[download_id] = {
+                    'status': 'completed', 
+                    'progress': 100,
+                    'file_path': str(file_path),
+                    'file_size': file_size
+                }
                 return True
         
+        logger.error(f"No downloaded file found for ID: {download_id}")
         raise Exception("Download completed but file not found")
         
     except Exception as e:
@@ -453,6 +463,8 @@ def download_instagram_video(url, format_type, title, download_id):
         total_size = int(response.headers.get('content-length', 0))
         downloaded = 0
         
+        logger.info(f"Downloading Instagram video to: {file_path}")
+        
         with open(file_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
@@ -467,9 +479,16 @@ def download_instagram_video(url, format_type, title, download_id):
                             'total': total_size
                         }
         
+        file_size = file_path.stat().st_size
+        logger.info(f"Instagram download completed: {file_path} (size: {file_size} bytes)")
+        
         download_files[download_id] = str(file_path)
-        download_progress[download_id] = {'status': 'completed', 'progress': 100}
-        logger.info(f"Instagram download completed: {file_path}")
+        download_progress[download_id] = {
+            'status': 'completed', 
+            'progress': 100,
+            'file_path': str(file_path),
+            'file_size': file_size
+        }
         return True
         
     except Exception as e:
@@ -494,6 +513,7 @@ def progress_hook(d, download_id):
             'total': d.get('total_bytes', 0)
         }
     elif d['status'] == 'finished':
+        logger.info(f"yt-dlp download finished for ID: {download_id}")
         download_progress[download_id] = {'status': 'completed', 'progress': 100}
 
 def delete_file(download_id):
@@ -565,8 +585,11 @@ def get_progress(download_id):
     """Get download progress"""
     try:
         if download_id in download_progress:
-            return jsonify(download_progress[download_id])
+            progress_info = download_progress[download_id]
+            logger.info(f"Progress request for {download_id}: {progress_info}")
+            return jsonify(progress_info)
         else:
+            logger.warning(f"Download not found: {download_id}")
             return jsonify({'error': 'Download not found'}), 404
     except Exception as e:
         logger.error(f"Error in get_progress: {str(e)}")
@@ -596,7 +619,36 @@ def test_endpoint():
             'current_downloads': current_downloads,
             'current_progress': current_progress,
             'download_files': list(download_files.keys()),
-            'progress_files': list(download_progress.keys())
+            'progress_files': list(download_progress.keys()),
+            'download_files_details': {k: {'path': v, 'exists': Path(v).exists()} for k, v in download_files.items()},
+            'progress_details': download_progress
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/debug', methods=['GET'])
+def debug_endpoint():
+    """Debug endpoint to check current state"""
+    try:
+        # Get all files in downloads directory
+        all_files = []
+        if DOWNLOADS_DIR.exists():
+            for file_path in DOWNLOADS_DIR.glob('*'):
+                if file_path.is_file():
+                    all_files.append({
+                        'name': file_path.name,
+                        'size': file_path.stat().st_size,
+                        'modified': datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
+                    })
+        
+        return jsonify({
+            'status': 'debug_info',
+            'downloads_directory': str(DOWNLOADS_DIR),
+            'downloads_exists': DOWNLOADS_DIR.exists(),
+            'all_files': all_files,
+            'download_files': download_files,
+            'download_progress': download_progress,
+            'current_time': datetime.now().isoformat()
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -605,7 +657,10 @@ def test_endpoint():
 def serve_file(download_id):
     """Serve downloaded file"""
     try:
+        logger.info(f"File request for download ID: {download_id}")
+        
         if download_id not in download_files:
+            logger.error(f"Download ID not found in files: {download_id}")
             return jsonify({'error': 'File not found'}), 404
         
         file_path = Path(download_files[download_id])
