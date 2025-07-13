@@ -29,6 +29,7 @@ def get_video_info(url):
         'quiet': False,  # Enable logging for debugging
         'no_warnings': False,  # Show warnings
         'extract_flat': False,
+        'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
     
     try:
@@ -100,6 +101,7 @@ def download_video(url, format_id=None):
         'outtmpl': output_template,
         'progress_hooks': [],
         'merge_output_format': 'mp4',
+        'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
     
     if format_id:
