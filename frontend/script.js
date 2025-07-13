@@ -361,8 +361,8 @@ class LumenDownloader {
         this.fileName.textContent = data.filename || 'Downloaded File';
         this.fileSize.textContent = data.file_size ? `Size: ${this.formatFileSize(data.file_size)}` : '';
         
-        // Set download link
-        this.downloadLink.href = `${this.apiUrl}/file/${data.download_id}`;
+        // Set download link using the stored download ID
+        this.downloadLink.href = `${this.apiUrl}/file/${this.downloadId}`;
         this.downloadLink.download = data.filename || 'video.mp4';
         
         // Auto-download after 2 seconds
