@@ -1,0 +1,24 @@
+# Netscape HTTP Cookie File
+# http://curl.haxx.se/rfc/cookie_spec.html
+# This file was generated from browser cookies
+# Updated with fresh Instagram cookies
+
+# Replace the values below with your fresh Instagram cookies
+# Format: domain	include_subdomains	path	secure	expiry	name	value
+
+.instagram.com	TRUE	/	TRUE	1783935542	csrftoken	YOUR_CSRFTOKEN_HERE
+.instagram.com	TRUE	/	TRUE	1766246904	datr	YOUR_DATR_HERE
+.instagram.com	TRUE	/	TRUE	1753004345	dpr	1.2000000476837158
+.instagram.com	TRUE	/	TRUE	1760175548	ds_user_id	YOUR_DS_USER_ID_HERE
+.instagram.com	TRUE	/	TRUE	1763222917	ig_did	YOUR_IG_DID_HERE
+.instagram.com	TRUE	/	TRUE	1763222908	ig_nrcb	1
+.instagram.com	TRUE	/	TRUE	1766246905	mid	YOUR_MID_HERE
+.instagram.com	TRUE	/	TRUE	1783936542	rur	YOUR_RUR_HERE
+.instagram.com	TRUE	/	TRUE	1783936542	sessionid	YOUR_SESSIONID_HERE
+
+# Instructions:
+# 1. Replace YOUR_*_HERE with actual values from your browser
+# 2. The sessionid is the most important cookie
+# 3. Keep the expiry dates as they are (they're in Unix timestamp format)
+# 4. Save this file as backend/cookies_insta.txt
+# 5. Run the test script to verify: python test_instagram_cookies.py 
