@@ -66,7 +66,13 @@ if os.path.exists(INSTAGRAM_COOKIES_FILE):
             L.load_session_from_file('instagram_session', cookies)
             logger.info("Loaded Instagram session with cookies from file")
         else:
-            logger.warning("No valid sessionid found in cookies file")
+            logger.warning("No sessionid found in cookies file - trying with available cookies")
+            # Try to use available cookies even without sessionid
+            if cookies:
+                L.context.load_cookies_from_file(INSTAGRAM_COOKIES_FILE)
+                logger.info("Loaded Instagram cookies without sessionid")
+            else:
+                logger.warning("No cookies found in file")
     except Exception as e:
         logger.warning(f"Could not load Instagram cookies: {e}")
 
