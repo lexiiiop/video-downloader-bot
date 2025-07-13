@@ -1,6 +1,6 @@
 class VideoDownloader {
     constructor() {
-        this.apiBase = 'http://localhost:5000/api';
+        this.apiBase = 'https://video-downloader-bot-production.up.railway.app/api';
         this.currentVideoInfo = null;
         this.selectedFormat = null;
         this.init();
