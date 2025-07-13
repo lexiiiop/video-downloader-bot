@@ -45,8 +45,11 @@ def get_video_info(url):
         'quiet': False,  # Enable logging for debugging
         'no_warnings': False,  # Show warnings
         'extract_flat': False,
-        'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
+    
+    # Only use cookies if the file exists
+    if os.path.exists('cookies.txt'):
+        ydl_opts['cookiefile'] = 'cookies.txt'
     
     try:
         logger.info(f"Starting video info extraction for: {url}")
@@ -119,18 +122,19 @@ def download_video_advanced(url, format_type, title, download_id):
     ydl_opts = {
         'outtmpl': output_template,
         'progress_hooks': [lambda d: progress_hook(d, download_id)],
-        'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
     
-    # Configure format based on type
+    # Only use cookies if the file exists
+    if os.path.exists('cookies.txt'):
+        ydl_opts['cookiefile'] = 'cookies.txt'
+    
+    # Configure format based on type - use simpler formats that don't require FFmpeg
     if format_type == 'best':
-        # Best video quality with best audio quality
-        ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
-        ydl_opts['merge_output_format'] = 'mp4'
-    elif format_type == 'video':
-        # High quality video with audio
+        # Best quality that includes audio (single format)
         ydl_opts['format'] = 'best[ext=mp4]/best'
-        ydl_opts['merge_output_format'] = 'mp4'
+    elif format_type == 'video':
+        # High quality video with audio (single format)
+        ydl_opts['format'] = 'best[ext=mp4]/best'
     elif format_type == 'audio':
         # Audio only in best quality
         ydl_opts['format'] = 'bestaudio[ext=m4a]/bestaudio'
@@ -140,13 +144,11 @@ def download_video_advanced(url, format_type, title, download_id):
             'preferredquality': '192',
         }]
     elif format_type == 'video_only':
-        # Ultra HD video without audio
+        # Ultra HD video without audio (single format)
         ydl_opts['format'] = 'bestvideo[ext=mp4]/bestvideo'
-        ydl_opts['merge_output_format'] = 'mp4'
     else:
         # Default to best quality
         ydl_opts['format'] = 'best[ext=mp4]/best'
-        ydl_opts['merge_output_format'] = 'mp4'
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
