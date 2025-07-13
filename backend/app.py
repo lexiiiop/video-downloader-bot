@@ -10,15 +10,9 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 import cloudscraper
 import time
+import requests
 
 app = Flask(__name__)
 CORS(app)
@@ -37,27 +31,37 @@ download_files = {}
 
 INSTAGRAM_COOKIES_FILE = 'cookies_insta.txt'
 
-# Initialize Selenium WebDriver for Instagram scraping
-def get_webdriver():
-    """Get configured Chrome WebDriver for Instagram scraping"""
-    chrome_options = Options()
-    chrome_options.add_argument('--headless')  # Run in background
-    chrome_options.add_argument('--no-sandbox')
-    chrome_options.add_argument('--disable-dev-shm-usage')
-    chrome_options.add_argument('--disable-gpu')
-    chrome_options.add_argument('--window-size=1920,1080')
-    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+# Initialize cloudscraper for Instagram requests
+def get_instagram_session():
+    """Create a cloudscraper session with Instagram cookies"""
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'mobile': False
+        }
+    )
     
-    try:
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        return driver
-    except Exception as e:
-        logger.error(f"Failed to initialize WebDriver: {e}")
-        return None
-
-# Initialize cloudscraper for API requests
-scraper = cloudscraper.create_scraper()
+    # Load Instagram cookies if available
+    if os.path.exists(INSTAGRAM_COOKIES_FILE):
+        cookies = {}
+        with open(INSTAGRAM_COOKIES_FILE, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '\t' in line:
+                    parts = line.split('\t')
+                    if len(parts) >= 7:
+                        cookie_name = parts[5]
+                        cookie_value = parts[6]
+                        if cookie_name.startswith('#HttpOnly_'):
+                            cookie_name = cookie_name[10:]
+                        cookies[cookie_name] = cookie_value
+        
+        # Add cookies to session
+        for name, value in cookies.items():
+            scraper.cookies.set(name, value, domain='.instagram.com')
+    
+    return scraper
 
 def is_instagram_url(url):
     """Check if URL is from Instagram"""
@@ -151,302 +155,228 @@ def get_video_info(url):
         return None
 
 def get_instagram_info(url):
-    """Get Instagram post information using Selenium"""
+    """Get Instagram post information using cloudscraper"""
     try:
-        driver = get_webdriver()
-        if not driver:
-            raise Exception("Failed to initialize WebDriver")
-        
         logger.info(f"Getting Instagram info for URL: {url}")
         
-        # Load cookies if available
-        if os.path.exists(INSTAGRAM_COOKIES_FILE):
-            driver.get("https://www.instagram.com")
-            cookies = {}
-            with open(INSTAGRAM_COOKIES_FILE, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#') and '\t' in line:
-                        parts = line.split('\t')
-                        if len(parts) >= 7:
-                            cookie_name = parts[5]
-                            cookie_value = parts[6]
-                            if cookie_name.startswith('#HttpOnly_'):
-                                cookie_name = cookie_name[10:]
-                            cookies[cookie_name] = cookie_value
-            
-            for name, value in cookies.items():
-                driver.add_cookie({'name': name, 'value': value})
+        # Create session with cookies
+        session = get_instagram_session()
         
-        # Navigate to the post
-        driver.get(url)
-        time.sleep(3)  # Wait for page to load
+        # Get the post page
+        response = session.get(url)
+        if response.status_code != 200:
+            raise Exception(f"Failed to fetch Instagram post: {response.status_code}")
         
-        # Check if it's a video post
-        try:
-            video_element = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.TAG_NAME, "video"))
-            )
-            video_url = video_element.get_attribute('src')
-            
-            if not video_url:
-                raise Exception("This Instagram post does not contain a video")
-            
-            # Get post caption
-            try:
-                caption_element = driver.find_element(By.CSS_SELECTOR, 'h1, ._a9zs')
-                caption = caption_element.text
-            except:
-                caption = "Instagram Post"
-            
-            # Get username
-            try:
-                username_element = driver.find_element(By.CSS_SELECTOR, 'a[href*="/p/"]')
-                username = username_element.text
-            except:
-                username = "unknown"
-            
-            # Get thumbnail
-            try:
-                img_element = driver.find_element(By.CSS_SELECTOR, 'img[src*="instagram"]')
-                thumbnail = img_element.get_attribute('src')
-            except:
-                thumbnail = ""
-            
-            format_info = {
-                'format_id': 'best',
-                'ext': 'mp4',
-                'filesize': 0,
-                'height': 0,
-                'width': 0,
-                'format_note': 'Instagram Video',
-                'vcodec': 'h264',
-                'acodec': 'aac',
-                'has_audio': True,
-            }
-            
-            return {
-                'title': caption,
-                'duration': 0,
-                'thumbnail': thumbnail,
-                'formats': [format_info],
-                'platform': 'instagram',
-                'post_id': get_instagram_post_id(url),
-                'owner_username': username,
-                'video_url': video_url
-            }
-            
-        except Exception as e:
-            raise Exception(f"Could not find video in Instagram post: {str(e)}")
+        # Extract video URL from page content
+        content = response.text
+        
+        # Look for video URL patterns
+        video_patterns = [
+            r'"video_url":"([^"]+)"',
+            r'"contentUrl":"([^"]+\.mp4[^"]*)"',
+            r'src="([^"]+\.mp4[^"]*)"',
+            r'<video[^>]*src="([^"]+)"',
+        ]
+        
+        video_url = None
+        for pattern in video_patterns:
+            match = re.search(pattern, content)
+            if match:
+                video_url = match.group(1)
+                video_url = video_url.replace('\\u0026', '&')
+                break
+        
+        if not video_url:
+            # Try alternative method - get post data from Instagram API
+            post_id = get_instagram_post_id(url)
+            if post_id:
+                api_url = f"https://www.instagram.com/p/{post_id}/?__a=1&__d=dis"
+                api_response = session.get(api_url)
+                if api_response.status_code == 200:
+                    try:
+                        data = api_response.json()
+                        if 'graphql' in data and 'shortcode_media' in data['graphql']:
+                            media = data['graphql']['shortcode_media']
+                            if media.get('is_video'):
+                                video_url = media.get('video_url')
+                    except:
+                        pass
+        
+        if not video_url:
+            raise Exception("Could not find video URL in Instagram post")
+        
+        # Get post caption/title
+        title_patterns = [
+            r'"caption":"([^"]+)"',
+            r'<meta property="og:title" content="([^"]+)"',
+            r'<title>([^<]+)</title>'
+        ]
+        
+        title = "Instagram Post"
+        for pattern in title_patterns:
+            match = re.search(pattern, content)
+            if match:
+                title = match.group(1)
+                title = title.replace('\\n', ' ').replace('\\r', ' ')
+                break
+        
+        # Create format info
+        format_info = {
+            'format_id': 'best',
+            'ext': 'mp4',
+            'filesize': 0,
+            'height': 1080,
+            'width': 1920,
+            'format_note': 'Best Quality',
+            'vcodec': 'h264',
+            'acodec': 'aac',
+            'has_audio': True,
+            'url': video_url
+        }
+        
+        return {
+            'title': title,
+            'duration': 0,
+            'thumbnail': '',
+            'formats': [format_info]
+        }
         
     except Exception as e:
         logger.error(f"Error getting Instagram info: {str(e)}")
         raise Exception(f"Instagram error: {str(e)}")
-    finally:
-        if driver:
-            driver.quit()
 
 def download_video_advanced(url, format_type, title, download_id):
-    """Download video with advanced format options"""
-    if is_instagram_url(url):
-        return download_instagram_video(url, format_type, title, download_id)
-    
-    # Use yt-dlp for other platforms
-    safe_title = sanitize_filename(title)
-    unique_id = str(uuid.uuid4())[:8]
-    output_template = str(DOWNLOADS_DIR / f"{safe_title}_{unique_id}.%(ext)s")
-    
-    ydl_opts = {
-        'outtmpl': output_template,
-        'progress_hooks': [lambda d: progress_hook(d, download_id)],
-    }
-    
-    if os.path.exists('cookies.txt'):
-        ydl_opts['cookiefile'] = 'cookies.txt'
-    
-    if format_type == 'best':
-        ydl_opts['format'] = 'best[ext=mp4]/best'
-    elif format_type == 'video':
-        ydl_opts['format'] = 'best[ext=mp4]/best'
-    elif format_type == 'audio':
-        ydl_opts['format'] = 'bestaudio[ext=m4a]/bestaudio'
-        ydl_opts['postprocessors'] = [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }]
-    elif format_type == 'video_only':
-        ydl_opts['format'] = 'bestvideo[ext=mp4]/bestvideo'
-    else:
-        ydl_opts['format'] = 'best[ext=mp4]/best'
-    
+    """Download video with advanced options"""
     try:
+        if is_instagram_url(url):
+            return download_instagram_video(url, format_type, title, download_id)
+        
+        # Use yt-dlp for other platforms
+        ydl_opts = {
+            'format': format_type,
+            'outtmpl': str(DOWNLOADS_DIR / f'{download_id}.%(ext)s'),
+            'progress_hooks': [lambda d: progress_hook(d, download_id)],
+            'quiet': False,
+            'no_warnings': False,
+        }
+        
+        if os.path.exists('cookies.txt'):
+            ydl_opts['cookiefile'] = 'cookies.txt'
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            
-            downloaded_files = list(DOWNLOADS_DIR.glob(f"{safe_title}_{unique_id}.*"))
-            if downloaded_files:
-                file_path = str(downloaded_files[0])
-                
-                download_files[download_id] = {
-                    'file_path': file_path,
-                    'filename': os.path.basename(file_path),
-                    'file_size': os.path.getsize(file_path),
-                    'created_at': datetime.now(),
-                    'title': title,
-                    'format_type': format_type
-                }
-                
-                download_progress[download_id]['completed'] = True
-                download_progress[download_id]['progress'] = 100
-                download_progress[download_id]['status'] = 'Download completed!'
-                
-                threading.Timer(1800, delete_file, args=[download_id]).start()
-                
-                return file_path
-            else:
-                raise Exception("Downloaded file not found")
+            ydl.download([url])
+        
+        # Find the downloaded file
+        for file_path in DOWNLOADS_DIR.glob(f'{download_id}.*'):
+            if file_path.is_file():
+                download_files[download_id] = str(file_path)
+                download_progress[download_id] = {'status': 'completed', 'progress': 100}
+                return True
+        
+        raise Exception("Download completed but file not found")
+        
     except Exception as e:
-        logger.error(f"Error downloading video: {str(e)}")
-        download_progress[download_id]['error'] = str(e)
-        raise
+        logger.error(f"Error in download_video_advanced: {str(e)}")
+        download_progress[download_id] = {'status': 'error', 'error': str(e)}
+        return False
 
 def download_instagram_video(url, format_type, title, download_id):
-    """Download Instagram video using Selenium"""
+    """Download Instagram video using cloudscraper"""
     try:
-        driver = get_webdriver()
-        if not driver:
-            raise Exception("Failed to initialize WebDriver")
+        logger.info(f"Downloading Instagram video: {url}")
         
-        logger.info(f"Downloading Instagram video for URL: {url}")
+        # Get video info first
+        info = get_instagram_info(url)
+        if not info or not info.get('formats'):
+            raise Exception("Could not get video information")
         
-        # Load cookies if available
-        if os.path.exists(INSTAGRAM_COOKIES_FILE):
-            driver.get("https://www.instagram.com")
-            cookies = {}
-            with open(INSTAGRAM_COOKIES_FILE, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#') and '\t' in line:
-                        parts = line.split('\t')
-                        if len(parts) >= 7:
-                            cookie_name = parts[5]
-                            cookie_value = parts[6]
-                            if cookie_name.startswith('#HttpOnly_'):
-                                cookie_name = cookie_name[10:]
-                            cookies[cookie_name] = cookie_value
-            
-            for name, value in cookies.items():
-                driver.add_cookie({'name': name, 'value': value})
-        
-        # Navigate to the post
-        driver.get(url)
-        time.sleep(3)
-        
-        # Find video element
-        video_element = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.TAG_NAME, "video"))
-        )
-        video_url = video_element.get_attribute('src')
-        
+        video_url = info['formats'][0].get('url')
         if not video_url:
-            raise Exception("This Instagram post does not contain a video")
+            raise Exception("No video URL found")
+        
+        # Create session with cookies
+        session = get_instagram_session()
         
         # Download the video
-        safe_title = sanitize_filename(title)
-        unique_id = str(uuid.uuid4())[:8]
-        filename = f"{safe_title}_{unique_id}.mp4"
-        file_path = str(DOWNLOADS_DIR / filename)
+        response = session.get(video_url, stream=True)
+        if response.status_code != 200:
+            raise Exception(f"Failed to download video: {response.status_code}")
         
-        # Use cloudscraper to download the video
-        response = scraper.get(video_url, stream=True)
-        response.raise_for_status()
+        # Save the video
+        file_path = DOWNLOADS_DIR / f'{download_id}.mp4'
+        total_size = int(response.headers.get('content-length', 0))
+        downloaded = 0
         
         with open(file_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     f.write(chunk)
+                    downloaded += len(chunk)
+                    if total_size > 0:
+                        progress = int((downloaded / total_size) * 100)
+                        download_progress[download_id] = {
+                            'status': 'downloading',
+                            'progress': progress,
+                            'downloaded': downloaded,
+                            'total': total_size
+                        }
         
-        # Update download info
-        download_files[download_id] = {
-            'file_path': file_path,
-            'filename': filename,
-            'file_size': os.path.getsize(file_path),
-            'created_at': datetime.now(),
-            'title': title,
-            'format_type': format_type,
-            'platform': 'instagram'
-        }
-        
-        # Mark as completed
-        download_progress[download_id]['completed'] = True
-        download_progress[download_id]['progress'] = 100
-        download_progress[download_id]['status'] = 'Download completed!'
-        
-        # Schedule file deletion after 30 minutes
-        threading.Timer(1800, delete_file, args=[download_id]).start()
-        
-        return file_path
+        download_files[download_id] = str(file_path)
+        download_progress[download_id] = {'status': 'completed', 'progress': 100}
+        return True
         
     except Exception as e:
         logger.error(f"Error downloading Instagram video: {str(e)}")
-        download_progress[download_id]['error'] = str(e)
-        raise
-    finally:
-        if driver:
-            driver.quit()
+        download_progress[download_id] = {'status': 'error', 'error': str(e)}
+        return False
 
 def progress_hook(d, download_id):
     """Progress hook for yt-dlp downloads"""
-    if download_id in download_progress:
-        if d['status'] == 'downloading':
-            try:
-                total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
-                downloaded = d.get('downloaded_bytes', 0)
-                if total > 0:
-                    progress = int((downloaded / total) * 100)
-                    download_progress[download_id]['progress'] = progress
-                    download_progress[download_id]['status'] = f"Downloading... {progress}%"
-            except:
-                pass
-        elif d['status'] == 'finished':
-            download_progress[download_id]['status'] = 'Processing...'
+    if d['status'] == 'downloading':
+        if 'total_bytes' in d and d['total_bytes']:
+            progress = int((d['downloaded_bytes'] / d['total_bytes']) * 100)
+        elif 'total_bytes_estimate' in d and d['total_bytes_estimate']:
+            progress = int((d['downloaded_bytes'] / d['total_bytes_estimate']) * 100)
+        else:
+            progress = 0
+        
+        download_progress[download_id] = {
+            'status': 'downloading',
+            'progress': progress,
+            'downloaded': d.get('downloaded_bytes', 0),
+            'total': d.get('total_bytes', 0)
+        }
+    elif d['status'] == 'finished':
+        download_progress[download_id] = {'status': 'completed', 'progress': 100}
 
 def delete_file(download_id):
-    """Delete file after specified time"""
-    if download_id in download_files:
-        try:
-            file_path = download_files[download_id]['file_path']
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                logger.info(f"Deleted file: {file_path}")
-        except Exception as e:
-            logger.error(f"Error deleting file: {e}")
-        finally:
-            # Clean up tracking
-            if download_id in download_files:
-                del download_files[download_id]
-            if download_id in download_progress:
-                del download_progress[download_id]
+    """Delete downloaded file after serving"""
+    try:
+        if download_id in download_files:
+            file_path = Path(download_files[download_id])
+            if file_path.exists():
+                file_path.unlink()
+            del download_files[download_id]
+        if download_id in download_progress:
+            del download_progress[download_id]
+    except Exception as e:
+        logger.error(f"Error deleting file {download_id}: {e}")
 
 @app.route('/api/info', methods=['POST'])
 def get_info():
     """Get video information"""
     try:
         data = request.get_json()
-        url = data.get('url')
-        
-        if not url:
+        if not data or 'url' not in data:
             return jsonify({'error': 'URL is required'}), 400
         
+        url = data['url']
         logger.info(f"Analyzing URL: {url}")
-        info = get_video_info(url)
         
+        info = get_video_info(url)
         if info:
-            logger.info(f"Found {len(info.get('formats', []))} formats for video: {info.get('title', 'Unknown')}")
             return jsonify(info)
         else:
-            logger.error("Could not extract video information")
             return jsonify({'error': 'Could not extract video information'}), 400
             
     except Exception as e:
@@ -455,44 +385,28 @@ def get_info():
 
 @app.route('/api/download', methods=['POST'])
 def download():
-    """Download video with advanced format options"""
+    """Download video"""
     try:
         data = request.get_json()
-        url = data.get('url')
+        if not data or 'url' not in data:
+            return jsonify({'error': 'URL is required'}), 400
+        
+        url = data['url']
         format_type = data.get('format', 'best')
         title = data.get('title', 'video')
         
-        if not url:
-            return jsonify({'error': 'URL is required'}), 400
-        
-        # Generate download ID
         download_id = str(uuid.uuid4())
+        download_progress[download_id] = {'status': 'starting', 'progress': 0}
         
-        # Initialize progress tracking
-        download_progress[download_id] = {
-            'progress': 0,
-            'status': 'Initializing...',
-            'completed': False,
-            'error': None
-        }
-        
-        logger.info(f"Starting download: {url} with format: {format_type}")
-        
-        # Start download in background thread
         def download_thread():
-            try:
-                download_video_advanced(url, format_type, title, download_id)
-            except Exception as e:
-                logger.error(f"Download thread error: {str(e)}")
-                download_progress[download_id]['error'] = str(e)
+            download_video_advanced(url, format_type, title, download_id)
         
         thread = threading.Thread(target=download_thread)
-        thread.daemon = True
         thread.start()
         
         return jsonify({
             'download_id': download_id,
-            'status': 'Download started'
+            'status': 'started'
         })
         
     except Exception as e:
@@ -503,33 +417,12 @@ def download():
 def get_progress(download_id):
     """Get download progress"""
     try:
-        if download_id not in download_progress:
+        if download_id in download_progress:
+            return jsonify(download_progress[download_id])
+        else:
             return jsonify({'error': 'Download not found'}), 404
-        
-        progress_info = download_progress[download_id]
-        
-        if progress_info.get('error'):
-            return jsonify({'error': progress_info['error']}), 400
-        
-        response = {
-            'progress': progress_info.get('progress', 0),
-            'status': progress_info.get('status', 'Unknown'),
-            'completed': progress_info.get('completed', False)
-        }
-        
-        # If completed, include file info
-        if progress_info.get('completed') and download_id in download_files:
-            file_info = download_files[download_id]
-            response.update({
-                'filename': file_info['filename'],
-                'file_size': file_info['file_size'],
-                'title': file_info['title']
-            })
-        
-        return jsonify(response)
-        
     except Exception as e:
-        logger.error(f"Error getting progress: {str(e)}")
+        logger.error(f"Error in get_progress: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/file/<download_id>', methods=['GET'])
@@ -539,20 +432,21 @@ def serve_file(download_id):
         if download_id not in download_files:
             return jsonify({'error': 'File not found'}), 404
         
-        file_info = download_files[download_id]
-        file_path = file_info['file_path']
+        file_path = Path(download_files[download_id])
+        if not file_path.exists():
+            return jsonify({'error': 'File not found'}), 404
         
-        if not os.path.exists(file_path):
-            return jsonify({'error': 'File not found on disk'}), 404
+        # Schedule file deletion after serving
+        threading.Timer(60.0, delete_file, args=[download_id]).start()
         
         return send_file(
             file_path,
             as_attachment=True,
-            download_name=file_info['filename']
+            download_name=file_path.name
         )
         
     except Exception as e:
-        logger.error(f"Error serving file: {str(e)}")
+        logger.error(f"Error in serve_file: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/health', methods=['GET'])
@@ -560,24 +454,26 @@ def health_check():
     """Health check endpoint"""
     return jsonify({'status': 'healthy'})
 
-# Cleanup old files on startup
 def cleanup_old_files():
-    """Clean up files older than 30 minutes"""
-    cutoff_time = datetime.now() - timedelta(minutes=30)
-    
-    for file_path in DOWNLOADS_DIR.glob('*'):
-        try:
+    """Clean up old downloaded files"""
+    try:
+        current_time = datetime.now()
+        for file_path in DOWNLOADS_DIR.glob('*'):
             if file_path.is_file():
-                file_time = datetime.fromtimestamp(file_path.stat().st_mtime)
-                if file_time < cutoff_time:
+                file_age = current_time - datetime.fromtimestamp(file_path.stat().st_mtime)
+                if file_age > timedelta(hours=1):  # Delete files older than 1 hour
                     file_path.unlink()
-                    logger.info(f"Cleaned up old file: {file_path}")
-        except Exception as e:
-            logger.error(f"Error cleaning up file {file_path}: {str(e)}")
-
-# Run cleanup on startup
-cleanup_old_files()
+    except Exception as e:
+        logger.error(f"Error in cleanup: {e}")
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False) 
+    # Start cleanup thread
+    def cleanup_thread():
+        while True:
+            time.sleep(300)  # Run every 5 minutes
+            cleanup_old_files()
+    
+    cleanup_thread_instance = threading.Thread(target=cleanup_thread, daemon=True)
+    cleanup_thread_instance.start()
+    
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000))) 

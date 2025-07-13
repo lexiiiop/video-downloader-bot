@@ -3,9 +3,7 @@ Flask-CORS==4.0.0
 yt-dlp==2023.12.30
 python-dotenv==1.0.0
 urllib3>=2.5.0,<3.0.0
-selenium==4.34.2
 cloudscraper==1.2.71
-webdriver-manager==4.0.2
 requests>=2.31.0
 websockets>=12.0
 brotli 
