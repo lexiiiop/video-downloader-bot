@@ -46,6 +46,14 @@ L = instaloader.Instaloader(
 
 INSTAGRAM_COOKIES_FILE = 'cookies_insta.txt'
 
+# Load Instagram cookies if available
+if os.path.exists(INSTAGRAM_COOKIES_FILE):
+    try:
+        L.context.load_cookies_from_file(INSTAGRAM_COOKIES_FILE)
+        logger.info("Loaded Instagram cookies from file")
+    except Exception as e:
+        logger.warning(f"Could not load Instagram cookies: {e}")
+
 def is_instagram_url(url):
     """Check if URL is from Instagram"""
     return 'instagram.com' in url.lower()
@@ -165,14 +173,6 @@ def get_instagram_info(url):
                 logger.info("Loaded Instagram session from file")
             except Exception as e:
                 logger.warning(f"Could not load Instagram session: {e}")
-        # Try to load cookies if available
-        if os.path.exists(INSTAGRAM_COOKIES_FILE):
-            try:
-                L.context.load_cookies(INSTAGRAM_COOKIES_FILE)
-                logger.info("Loaded Instagram cookies from file")
-            except Exception as e:
-                logger.warning(f"Could not load Instagram cookies: {e}")
-        
         # Get post info
         post = instaloader.Post.from_shortcode(L.context, post_id)
         
@@ -311,14 +311,6 @@ def download_instagram_video(url, format_type, title, download_id):
                 logger.info("Loaded Instagram session from file")
             except Exception as e:
                 logger.warning(f"Could not load Instagram session: {e}")
-        # Try to load cookies if available
-        if os.path.exists(INSTAGRAM_COOKIES_FILE):
-            try:
-                L.context.load_cookies(INSTAGRAM_COOKIES_FILE)
-                logger.info("Loaded Instagram cookies from file")
-            except Exception as e:
-                logger.warning(f"Could not load Instagram cookies: {e}")
-        
         # Get post
         download_progress[download_id]['status'] = 'Getting post information...'
         download_progress[download_id]['progress'] = 30
