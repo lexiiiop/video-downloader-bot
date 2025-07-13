@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import yt_dlp
+import instaloader
 import os
 import tempfile
 import uuid
@@ -31,6 +32,37 @@ DOWNLOADS_DIR.mkdir(exist_ok=True)
 download_progress = {}
 download_files = {}
 
+# Initialize Instaloader instance
+L = instaloader.Instaloader(
+    download_pictures=False,
+    download_videos=True,
+    download_video_thumbnails=False,
+    download_geotags=False,
+    download_comments=False,
+    save_metadata=False,
+    compress_json=False,
+    dirname_pattern=str(DOWNLOADS_DIR)
+)
+
+def is_instagram_url(url):
+    """Check if URL is from Instagram"""
+    return 'instagram.com' in url.lower()
+
+def get_instagram_post_id(url):
+    """Extract Instagram post ID from URL"""
+    # Handle different Instagram URL formats
+    patterns = [
+        r'instagram.com/p/([^/]+)',
+        r'instagram.com/reel/([^/]+)',
+        r'instagram.com/tv/([^/]+)'
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
 def sanitize_filename(filename):
     """Sanitize filename for safe file system usage"""
     # Remove or replace invalid characters
@@ -41,6 +73,11 @@ def sanitize_filename(filename):
 
 def get_video_info(url):
     """Extract video information without downloading"""
+    # Check if it's an Instagram URL
+    if is_instagram_url(url):
+        return get_instagram_info(url)
+    
+    # Use yt-dlp for other platforms
     ydl_opts = {
         'quiet': False,  # Enable logging for debugging
         'no_warnings': False,  # Show warnings
@@ -110,8 +147,68 @@ def get_video_info(url):
         logger.error(f"Error extracting video info: {str(e)}")
         return None
 
+def get_instagram_info(url):
+    """Get Instagram post information"""
+    try:
+        post_id = get_instagram_post_id(url)
+        if not post_id:
+            raise Exception("Could not extract Instagram post ID from URL")
+        
+        logger.info(f"Getting Instagram info for post ID: {post_id}")
+        
+        # Try to load session if available
+        if os.path.exists('instagram_session'):
+            try:
+                L.load_session_from_file('instagram_session')
+                logger.info("Loaded Instagram session from file")
+            except Exception as e:
+                logger.warning(f"Could not load Instagram session: {e}")
+        
+        # Get post info
+        post = instaloader.Post.from_shortcode(L.context, post_id)
+        
+        # Check if post has video
+        if not post.is_video:
+            raise Exception("This Instagram post does not contain a video")
+        
+        # Get video info
+        video_url = post.video_url
+        video_size = post.video_filesize if hasattr(post, 'video_filesize') else 0
+        
+        # Create format info similar to yt-dlp
+        format_info = {
+            'format_id': 'best',
+            'ext': 'mp4',
+            'filesize': video_size,
+            'height': post.video_height if hasattr(post, 'video_height') else 0,
+            'width': post.video_width if hasattr(post, 'video_width') else 0,
+            'format_note': 'Instagram Video',
+            'vcodec': 'h264',
+            'acodec': 'aac',
+            'has_audio': True,
+        }
+        
+        return {
+            'title': f"Instagram Post by {post.owner_username}",
+            'duration': 0,  # Instagram doesn't provide duration
+            'thumbnail': post.url if hasattr(post, 'url') else '',
+            'formats': [format_info],
+            'platform': 'instagram',
+            'post_id': post_id,
+            'owner_username': post.owner_username
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting Instagram info: {str(e)}")
+        raise Exception(f"Instagram error: {str(e)}")
+
 def download_video_advanced(url, format_type, title, download_id):
     """Download video with advanced format options"""
+    # Check if it's an Instagram URL
+    if is_instagram_url(url):
+        return download_instagram_video(url, format_type, title, download_id)
+    
+    # Use yt-dlp for other platforms
     # Sanitize title for filename
     safe_title = sanitize_filename(title)
     
@@ -182,6 +279,91 @@ def download_video_advanced(url, format_type, title, download_id):
                 raise Exception("Downloaded file not found")
     except Exception as e:
         logger.error(f"Error downloading video: {str(e)}")
+        download_progress[download_id]['error'] = str(e)
+        raise
+
+def download_instagram_video(url, format_type, title, download_id):
+    """Download Instagram video using Instaloader"""
+    try:
+        post_id = get_instagram_post_id(url)
+        if not post_id:
+            raise Exception("Could not extract Instagram post ID from URL")
+        
+        logger.info(f"Downloading Instagram video for post ID: {post_id}")
+        
+        # Update progress
+        download_progress[download_id]['status'] = 'Connecting to Instagram...'
+        download_progress[download_id]['progress'] = 10
+        
+        # Try to load session if available
+        if os.path.exists('instagram_session'):
+            try:
+                L.load_session_from_file('instagram_session')
+                logger.info("Loaded Instagram session from file")
+            except Exception as e:
+                logger.warning(f"Could not load Instagram session: {e}")
+        
+        # Get post
+        download_progress[download_id]['status'] = 'Getting post information...'
+        download_progress[download_id]['progress'] = 30
+        
+        post = instaloader.Post.from_shortcode(L.context, post_id)
+        
+        if not post.is_video:
+            raise Exception("This Instagram post does not contain a video")
+        
+        # Update progress
+        download_progress[download_id]['status'] = 'Preparing download...'
+        download_progress[download_id]['progress'] = 50
+        
+        # Generate filename
+        safe_title = sanitize_filename(title)
+        unique_id = str(uuid.uuid4())[:8]
+        filename = f"{safe_title}_{unique_id}.mp4"
+        file_path = str(DOWNLOADS_DIR / filename)
+        
+        # Download video
+        download_progress[download_id]['status'] = 'Downloading video...'
+        download_progress[download_id]['progress'] = 70
+        
+        # Download the video file directly
+        import requests
+        video_response = requests.get(post.video_url, stream=True)
+        video_response.raise_for_status()
+        
+        with open(file_path, 'wb') as f:
+            for chunk in video_response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        
+        # Update progress
+        download_progress[download_id]['status'] = 'Processing...'
+        download_progress[download_id]['progress'] = 90
+        
+        # Update download info
+        download_files[download_id] = {
+            'file_path': file_path,
+            'filename': filename,
+            'file_size': os.path.getsize(file_path),
+            'created_at': datetime.now(),
+            'title': title,
+            'format_type': format_type,
+            'platform': 'instagram'
+        }
+        
+        # Mark as completed
+        download_progress[download_id]['completed'] = True
+        download_progress[download_id]['progress'] = 100
+        download_progress[download_id]['status'] = 'Download completed!'
+        
+        # Schedule file deletion after 30 minutes
+        threading.Timer(1800, delete_file, args=[download_id]).start()
+        
+        logger.info(f"Instagram video downloaded successfully: {file_path}")
+        return file_path
+        
+    except Exception as e:
+        logger.error(f"Error downloading Instagram video: {str(e)}")
         download_progress[download_id]['error'] = str(e)
         raise
 
@@ -346,6 +528,32 @@ def serve_file(download_id):
     except Exception as e:
         logger.error(f"Error serving file: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/instagram/session', methods=['POST'])
+def create_instagram_session():
+    """Create Instagram session for authenticated downloads"""
+    try:
+        data = request.get_json()
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not username or not password:
+            return jsonify({'error': 'Username and password are required'}), 400
+        
+        logger.info(f"Creating Instagram session for user: {username}")
+        
+        # Login to Instagram
+        L.login(username, password)
+        
+        # Save session
+        L.save_session_to_file('instagram_session')
+        
+        logger.info("Instagram session created successfully")
+        return jsonify({'message': 'Instagram session created successfully'})
+        
+    except Exception as e:
+        logger.error(f"Error creating Instagram session: {str(e)}")
+        return jsonify({'error': f'Failed to create session: {str(e)}'}), 500
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
