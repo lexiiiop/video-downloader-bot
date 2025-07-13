@@ -11,7 +11,7 @@ app = Flask(__name__)
 
 # Configure CORS for production
 if os.environ.get('FLASK_ENV') == 'production':
-    CORS(app, origins=['https://*.netlify.app', 'https://*.vercel.app'])
+    CORS(app, origins=['*'])  # Allow all origins for now
 else:
     CORS(app)
 
