@@ -4,8 +4,12 @@ import yt_dlp
 import os
 import tempfile
 import uuid
+import threading
+import time
 from pathlib import Path
 import logging
+import re
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
@@ -22,6 +26,18 @@ logger = logging.getLogger(__name__)
 # Create downloads directory
 DOWNLOADS_DIR = Path("downloads")
 DOWNLOADS_DIR.mkdir(exist_ok=True)
+
+# Store download progress and file info
+download_progress = {}
+download_files = {}
+
+def sanitize_filename(filename):
+    """Sanitize filename for safe file system usage"""
+    # Remove or replace invalid characters
+    filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
+    # Remove extra spaces and limit length
+    filename = re.sub(r'\s+', ' ', filename).strip()
+    return filename[:100]  # Limit to 100 characters
 
 def get_video_info(url):
     """Extract video information without downloading"""
@@ -91,38 +107,117 @@ def get_video_info(url):
         logger.error(f"Error extracting video info: {str(e)}")
         return None
 
-def download_video(url, format_id=None):
-    """Download video with specified format"""
-    # Generate unique filename
-    unique_id = str(uuid.uuid4())
-    output_template = str(DOWNLOADS_DIR / f"{unique_id}.%(ext)s")
+def download_video_advanced(url, format_type, title, download_id):
+    """Download video with advanced format options"""
+    # Sanitize title for filename
+    safe_title = sanitize_filename(title)
+    
+    # Generate unique filename with title
+    unique_id = str(uuid.uuid4())[:8]
+    output_template = str(DOWNLOADS_DIR / f"{safe_title}_{unique_id}.%(ext)s")
     
     ydl_opts = {
         'outtmpl': output_template,
-        'progress_hooks': [],
-        'merge_output_format': 'mp4',
+        'progress_hooks': [lambda d: progress_hook(d, download_id)],
         'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
     
-    if format_id:
-        # For specific format, try to get it with audio
-        ydl_opts['format'] = f'{format_id}+bestaudio/best'
-    else:
-        # For best quality, get best video with audio
+    # Configure format based on type
+    if format_type == 'best':
+        # Best video quality with best audio quality
+        ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+        ydl_opts['merge_output_format'] = 'mp4'
+    elif format_type == 'video':
+        # High quality video with audio
         ydl_opts['format'] = 'best[ext=mp4]/best'
+        ydl_opts['merge_output_format'] = 'mp4'
+    elif format_type == 'audio':
+        # Audio only in best quality
+        ydl_opts['format'] = 'bestaudio[ext=m4a]/bestaudio'
+        ydl_opts['postprocessors'] = [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }]
+    elif format_type == 'video_only':
+        # Ultra HD video without audio
+        ydl_opts['format'] = 'bestvideo[ext=mp4]/bestvideo'
+        ydl_opts['merge_output_format'] = 'mp4'
+    else:
+        # Default to best quality
+        ydl_opts['format'] = 'best[ext=mp4]/best'
+        ydl_opts['merge_output_format'] = 'mp4'
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
+            
             # Find the downloaded file
-            downloaded_files = list(DOWNLOADS_DIR.glob(f"{unique_id}.*"))
+            downloaded_files = list(DOWNLOADS_DIR.glob(f"{safe_title}_{unique_id}.*"))
             if downloaded_files:
-                return str(downloaded_files[0])
+                file_path = str(downloaded_files[0])
+                
+                # Update download info
+                download_files[download_id] = {
+                    'file_path': file_path,
+                    'filename': os.path.basename(file_path),
+                    'file_size': os.path.getsize(file_path),
+                    'created_at': datetime.now(),
+                    'title': title,
+                    'format_type': format_type
+                }
+                
+                # Mark as completed
+                download_progress[download_id]['completed'] = True
+                download_progress[download_id]['progress'] = 100
+                download_progress[download_id]['status'] = 'Download completed!'
+                
+                # Schedule file deletion after 30 minutes
+                threading.Timer(1800, delete_file, args=[download_id]).start()
+                
+                return file_path
             else:
                 raise Exception("Downloaded file not found")
     except Exception as e:
         logger.error(f"Error downloading video: {str(e)}")
+        download_progress[download_id]['error'] = str(e)
         raise
+
+def progress_hook(d, download_id):
+    """Progress hook for yt-dlp"""
+    if download_id in download_progress:
+        if d['status'] == 'downloading':
+            # Calculate progress percentage
+            total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+            downloaded = d.get('downloaded_bytes', 0)
+            
+            if total > 0:
+                progress = min(int((downloaded / total) * 100), 99)
+                download_progress[download_id]['progress'] = progress
+                download_progress[download_id]['status'] = f'Downloading... {progress}%'
+            else:
+                download_progress[download_id]['status'] = 'Downloading...'
+        
+        elif d['status'] == 'finished':
+            download_progress[download_id]['status'] = 'Processing...'
+            download_progress[download_id]['progress'] = 95
+
+def delete_file(download_id):
+    """Delete file after 30 minutes"""
+    if download_id in download_files:
+        file_info = download_files[download_id]
+        file_path = file_info['file_path']
+        
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"Deleted file: {file_path}")
+        except Exception as e:
+            logger.error(f"Error deleting file {file_path}: {str(e)}")
+        
+        # Clean up tracking data
+        download_files.pop(download_id, None)
+        download_progress.pop(download_id, None)
 
 @app.route('/api/info', methods=['POST'])
 def get_info():
@@ -150,46 +245,102 @@ def get_info():
 
 @app.route('/api/download', methods=['POST'])
 def download():
-    """Download video"""
+    """Download video with advanced format options"""
     try:
         data = request.get_json()
         url = data.get('url')
-        format_id = data.get('format_id')
+        format_type = data.get('format', 'best')
+        title = data.get('title', 'video')
         
         if not url:
             return jsonify({'error': 'URL is required'}), 400
         
-        logger.info(f"Downloading URL: {url} with format: {format_id}")
+        # Generate download ID
+        download_id = str(uuid.uuid4())
         
-        # Download the video
-        file_path = download_video(url, format_id)
+        # Initialize progress tracking
+        download_progress[download_id] = {
+            'progress': 0,
+            'status': 'Initializing...',
+            'completed': False,
+            'error': None
+        }
         
-        # Get file info
-        file_size = os.path.getsize(file_path)
-        file_name = os.path.basename(file_path)
+        logger.info(f"Starting download: {url} with format: {format_type}")
         
-        logger.info(f"Download completed: {file_name} ({file_size} bytes)")
+        # Start download in background thread
+        def download_thread():
+            try:
+                download_video_advanced(url, format_type, title, download_id)
+            except Exception as e:
+                logger.error(f"Download thread error: {str(e)}")
+                download_progress[download_id]['error'] = str(e)
+        
+        thread = threading.Thread(target=download_thread)
+        thread.daemon = True
+        thread.start()
         
         return jsonify({
-            'success': True,
-            'file_path': file_path,
-            'file_name': file_name,
-            'file_size': file_size
+            'download_id': download_id,
+            'status': 'Download started'
         })
         
     except Exception as e:
         logger.error(f"Error in download: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/download-file/<filename>', methods=['GET'])
-def download_file(filename):
+@app.route('/api/progress/<download_id>', methods=['GET'])
+def get_progress(download_id):
+    """Get download progress"""
+    try:
+        if download_id not in download_progress:
+            return jsonify({'error': 'Download not found'}), 404
+        
+        progress_info = download_progress[download_id]
+        
+        if progress_info.get('error'):
+            return jsonify({'error': progress_info['error']}), 400
+        
+        response = {
+            'progress': progress_info.get('progress', 0),
+            'status': progress_info.get('status', 'Unknown'),
+            'completed': progress_info.get('completed', False)
+        }
+        
+        # If completed, include file info
+        if progress_info.get('completed') and download_id in download_files:
+            file_info = download_files[download_id]
+            response.update({
+                'filename': file_info['filename'],
+                'file_size': file_info['file_size'],
+                'title': file_info['title']
+            })
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Error getting progress: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/file/<download_id>', methods=['GET'])
+def serve_file(download_id):
     """Serve downloaded file"""
     try:
-        file_path = DOWNLOADS_DIR / filename
-        if file_path.exists():
-            return send_file(file_path, as_attachment=True)
-        else:
+        if download_id not in download_files:
             return jsonify({'error': 'File not found'}), 404
+        
+        file_info = download_files[download_id]
+        file_path = file_info['file_path']
+        
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File not found on disk'}), 404
+        
+        return send_file(
+            file_path,
+            as_attachment=True,
+            download_name=file_info['filename']
+        )
+        
     except Exception as e:
         logger.error(f"Error serving file: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -199,6 +350,24 @@ def health_check():
     """Health check endpoint"""
     return jsonify({'status': 'healthy'})
 
+# Cleanup old files on startup
+def cleanup_old_files():
+    """Clean up files older than 30 minutes"""
+    cutoff_time = datetime.now() - timedelta(minutes=30)
+    
+    for file_path in DOWNLOADS_DIR.glob('*'):
+        try:
+            if file_path.is_file():
+                file_time = datetime.fromtimestamp(file_path.stat().st_mtime)
+                if file_time < cutoff_time:
+                    file_path.unlink()
+                    logger.info(f"Cleaned up old file: {file_path}")
+        except Exception as e:
+            logger.error(f"Error cleaning up file {file_path}: {str(e)}")
+
+# Run cleanup on startup
+cleanup_old_files()
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(debug=False, host='0.0.0.0', port=port) 
+    app.run(host='0.0.0.0', port=port, debug=False) 

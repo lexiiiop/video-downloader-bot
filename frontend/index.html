@@ -3,86 +3,171 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video Downloader Pro</title>
-    <link rel="stylesheet" href="styles.css">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <title>LUMEN - Advanced Media Downloader</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <div class="background-animation">
+        <div class="floating-orb orb-1"></div>
+        <div class="floating-orb orb-2"></div>
+        <div class="floating-orb orb-3"></div>
+    </div>
+
     <div class="container">
+        <!-- Header with Logo -->
         <header class="header">
-            <div class="logo">
-                <i class="fas fa-download"></i>
-                <h1>Video Downloader Pro</h1>
+            <div class="logo-container">
+                <div class="logo-icon">
+                    <span class="material-symbols-outlined">download</span>
+                </div>
+                <h1 class="logo-text">LUMEN</h1>
             </div>
-            <p class="subtitle">Download videos from YouTube, Instagram, and more</p>
+            <p class="tagline">Illuminate Your Content</p>
         </header>
 
+        <!-- Main Content -->
         <main class="main-content">
-            <div class="input-section">
-                <div class="url-input-container">
-                    <input 
-                        type="url" 
-                        id="videoUrl" 
-                        placeholder="Paste video URL here (YouTube, Instagram, etc.)"
-                        class="url-input"
-                    >
-                    <button id="analyzeBtn" class="analyze-btn">
-                        <i class="fas fa-search"></i>
-                        Analyze
+            <!-- URL Input Section -->
+            <div class="input-section glass-card">
+                <div class="input-container">
+                    <div class="url-input-wrapper">
+                        <span class="material-symbols-outlined input-icon">link</span>
+                        <input type="url" id="urlInput" placeholder="Paste your video URL here..." class="url-input">
+                        <button id="detectBtn" class="detect-btn" disabled>
+                            <span class="material-symbols-outlined">auto_awesome</span>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Platform Detection -->
+                <div id="platformInfo" class="platform-info hidden">
+                    <div class="platform-badge">
+                        <span class="material-symbols-outlined platform-icon"></span>
+                        <span class="platform-name"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Download Options -->
+            <div id="downloadOptions" class="download-options hidden">
+                <h2 class="section-title">Choose Your Format</h2>
+                
+                <!-- Best Quality Option -->
+                <div class="option-card premium-option">
+                    <div class="option-header">
+                        <span class="material-symbols-outlined option-icon">star</span>
+                        <h3>Premium Quality</h3>
+                        <span class="badge">Recommended</span>
+                    </div>
+                    <p class="option-description">Best video quality with maximum audio quality</p>
+                    <button class="download-btn premium-btn" data-format="best">
+                        <span class="material-symbols-outlined">download</span>
+                        Download Best Quality
+                    </button>
+                </div>
+
+                <!-- Video Options -->
+                <div class="options-grid">
+                    <div class="option-card">
+                        <div class="option-header">
+                            <span class="material-symbols-outlined option-icon">video_file</span>
+                            <h3>Video Only</h3>
+                        </div>
+                        <p class="option-description">High-quality video with audio</p>
+                        <button class="download-btn" data-format="video">
+                            <span class="material-symbols-outlined">download</span>
+                            Download Video
+                        </button>
+                    </div>
+
+                    <div class="option-card">
+                        <div class="option-header">
+                            <span class="material-symbols-outlined option-icon">audio_file</span>
+                            <h3>Audio Only</h3>
+                        </div>
+                        <p class="option-description">Extract audio in best quality</p>
+                        <button class="download-btn" data-format="audio">
+                            <span class="material-symbols-outlined">download</span>
+                            Download Audio
+                        </button>
+                    </div>
+
+                    <div class="option-card">
+                        <div class="option-header">
+                            <span class="material-symbols-outlined option-icon">hd</span>
+                            <h3>Ultra HD Video</h3>
+                        </div>
+                        <p class="option-description">Maximum video quality (no audio)</p>
+                        <button class="download-btn" data-format="video_only">
+                            <span class="material-symbols-outlined">download</span>
+                            Download Ultra HD
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Progress Section -->
+            <div id="progressSection" class="progress-section hidden">
+                <div class="progress-card glass-card">
+                    <div class="progress-header">
+                        <span class="material-symbols-outlined">cloud_download</span>
+                        <h3>Downloading...</h3>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar">
+                            <div class="progress-fill"></div>
+                        </div>
+                        <span class="progress-text">0%</span>
+                    </div>
+                    <p class="progress-status">Initializing download...</p>
+                </div>
+            </div>
+
+            <!-- Result Section -->
+            <div id="resultSection" class="result-section hidden">
+                <div class="result-card glass-card">
+                    <div class="result-header">
+                        <span class="material-symbols-outlined success-icon">check_circle</span>
+                        <h3>Download Complete!</h3>
+                    </div>
+                    <div class="file-info">
+                        <p class="file-name"></p>
+                        <p class="file-size"></p>
+                    </div>
+                    <div class="warning-message">
+                        <span class="material-symbols-outlined warning-icon">schedule</span>
+                        <p>⚠️ File will be automatically deleted in 30 minutes</p>
+                    </div>
+                    <a id="downloadLink" class="download-link-btn" download>
+                        <span class="material-symbols-outlined">file_download</span>
+                        Download File
+                    </a>
+                </div>
+            </div>
+
+            <!-- Error Section -->
+            <div id="errorSection" class="error-section hidden">
+                <div class="error-card glass-card">
+                    <div class="error-header">
+                        <span class="material-symbols-outlined error-icon">error</span>
+                        <h3>Download Failed</h3>
+                    </div>
+                    <p class="error-message"></p>
+                    <button class="retry-btn" onclick="resetUI()">
+                        <span class="material-symbols-outlined">refresh</span>
+                        Try Again
                     </button>
                 </div>
             </div>
-
-            <div id="loadingSection" class="loading-section hidden">
-                <div class="spinner"></div>
-                <p>Analyzing video...</p>
-            </div>
-
-            <div id="errorSection" class="error-section hidden">
-                <i class="fas fa-exclamation-triangle"></i>
-                <p id="errorMessage"></p>
-            </div>
-
-            <div id="videoInfoSection" class="video-info-section hidden">
-                <div class="video-preview">
-                    <img id="videoThumbnail" src="" alt="Video thumbnail" class="thumbnail">
-                    <div class="video-details">
-                        <h3 id="videoTitle"></h3>
-                        <p id="videoDuration"></p>
-                    </div>
-                </div>
-
-                <div class="formats-section">
-                    <h3>Available Formats</h3>
-                    <div id="formatsList" class="formats-list">
-                        <!-- Formats will be populated here -->
-                    </div>
-                </div>
-            </div>
-
-            <div id="downloadSection" class="download-section hidden">
-                <div class="download-progress">
-                    <div class="progress-bar">
-                        <div id="progressFill" class="progress-fill"></div>
-                    </div>
-                    <p id="downloadStatus">Preparing download...</p>
-                </div>
-            </div>
-
-            <div id="successSection" class="success-section hidden">
-                <i class="fas fa-check-circle"></i>
-                <h3>Download Complete!</h3>
-                <p id="downloadInfo"></p>
-                <button id="downloadFileBtn" class="download-file-btn">
-                    <i class="fas fa-download"></i>
-                    Download File
-                </button>
-            </div>
         </main>
 
+        <!-- Footer -->
         <footer class="footer">
-            <p>&copy; 2024 Video Downloader Pro. Built with ❤️ using Python & JavaScript</p>
+            <p>Powered by advanced AI technology • Secure & Fast Downloads</p>
         </footer>
     </div>
 
