@@ -38,6 +38,12 @@ For better success rates and access to private content:
 
 2. **Or use the frontend** (if session creation UI is added)
 
+### Testing Authentication
+You can test if your Instagram session is working:
+```bash
+curl https://your-backend-url/api/instagram/test
+```
+
 ## 🔐 Authentication Benefits
 
 Creating an Instagram session provides:
@@ -75,7 +81,13 @@ Creating an Instagram session provides:
 
 **"Instagram error: Login required"**
 - Create an Instagram session using the authentication endpoint
+- Test your session with `/api/instagram/test`
 - Or try downloading public content without authentication
+
+**"Instagram authentication failed"**
+- Your session may have expired
+- Try creating a new session with fresh cookies
+- Check if your cookies file has a valid `sessionid`
 
 **"Rate limited"**
 - Wait a few minutes before trying again

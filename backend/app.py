@@ -49,8 +49,24 @@ INSTAGRAM_COOKIES_FILE = 'cookies_insta.txt'
 # Load Instagram cookies if available
 if os.path.exists(INSTAGRAM_COOKIES_FILE):
     try:
-        L.context.load_cookies_from_file(INSTAGRAM_COOKIES_FILE)
-        logger.info("Loaded Instagram cookies from file")
+        # Parse cookies from file and load them properly
+        cookies = {}
+        with open(INSTAGRAM_COOKIES_FILE, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '\t' in line:
+                    parts = line.split('\t')
+                    if len(parts) >= 7:
+                        cookie_name = parts[5]
+                        cookie_value = parts[6]
+                        cookies[cookie_name] = cookie_value
+        
+        # Load session with proper cookies
+        if 'sessionid' in cookies and cookies['sessionid']:
+            L.load_session_from_file('instagram_session', cookies)
+            logger.info("Loaded Instagram session with cookies from file")
+        else:
+            logger.warning("No valid sessionid found in cookies file")
     except Exception as e:
         logger.warning(f"Could not load Instagram cookies: {e}")
 
@@ -174,7 +190,14 @@ def get_instagram_info(url):
             except Exception as e:
                 logger.warning(f"Could not load Instagram session: {e}")
         # Get post info
-        post = instaloader.Post.from_shortcode(L.context, post_id)
+        try:
+            post = instaloader.Post.from_shortcode(L.context, post_id)
+        except Exception as post_error:
+            if "401" in str(post_error) or "Unauthorized" in str(post_error):
+                logger.error("Instagram authentication failed. Please check your session.")
+                raise Exception("Instagram authentication failed. Please try creating a new session or check your cookies.")
+            else:
+                raise post_error
         
         # Check if post has video
         if not post.is_video:
@@ -315,7 +338,14 @@ def download_instagram_video(url, format_type, title, download_id):
         download_progress[download_id]['status'] = 'Getting post information...'
         download_progress[download_id]['progress'] = 30
         
-        post = instaloader.Post.from_shortcode(L.context, post_id)
+        try:
+            post = instaloader.Post.from_shortcode(L.context, post_id)
+        except Exception as post_error:
+            if "401" in str(post_error) or "Unauthorized" in str(post_error):
+                logger.error("Instagram authentication failed during download. Please check your session.")
+                raise Exception("Instagram authentication failed. Please try creating a new session or check your cookies.")
+            else:
+                raise post_error
         
         if not post.is_video:
             raise Exception("This Instagram post does not contain a video")
@@ -553,6 +583,14 @@ def create_instagram_session():
         # Login to Instagram
         L.login(username, password)
         
+        # Test login to ensure it worked
+        try:
+            test_user = L.test_login()
+            logger.info(f"Login test successful for user: {test_user}")
+        except Exception as test_error:
+            logger.warning(f"Login test failed: {test_error}")
+            # Continue anyway as the login might still work
+        
         # Save session
         L.save_session_to_file('instagram_session')
         
@@ -562,6 +600,25 @@ def create_instagram_session():
     except Exception as e:
         logger.error(f"Error creating Instagram session: {str(e)}")
         return jsonify({'error': f'Failed to create session: {str(e)}'}), 500
+
+@app.route('/api/instagram/test', methods=['GET'])
+def test_instagram_session():
+    """Test Instagram session authentication"""
+    try:
+        # Try to test login
+        test_user = L.test_login()
+        return jsonify({
+            'status': 'authenticated',
+            'username': test_user,
+            'message': 'Instagram session is valid'
+        })
+    except Exception as e:
+        logger.error(f"Instagram session test failed: {str(e)}")
+        return jsonify({
+            'status': 'not_authenticated',
+            'error': str(e),
+            'message': 'Instagram session is invalid or expired'
+        }), 401
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
