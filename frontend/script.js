@@ -305,11 +305,11 @@ class LumenDownloader {
                 }
 
                 const progress = data.progress || 0;
-                const status = data.status || 'Downloading...';
+                const status = data.status === 'completed' ? 'Download completed!' : (data.status || 'Downloading...');
                 
                 this.updateProgress(progress, status);
 
-                if (data.completed) {
+                if (data.status === 'completed') {
                     clearInterval(this.progressInterval);
                     this.handleDownloadComplete(data);
                 }
@@ -317,7 +317,13 @@ class LumenDownloader {
             } catch (error) {
                 console.error('Progress tracking error:', error);
                 clearInterval(this.progressInterval);
-                this.showError(`Progress tracking failed: ${error.message}`);
+                
+                // Check if it's a 404 error (download not found)
+                if (error.message.includes('404')) {
+                    this.showError('Download not found. Please try again.');
+                } else {
+                    this.showError(`Progress tracking failed: ${error.message}`);
+                }
             }
         }, 1000);
     }
