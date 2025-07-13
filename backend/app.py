@@ -1,80 +1,63 @@
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import yt_dlp
-import instaloader
 import os
 import tempfile
 import uuid
 import threading
-import time
-from pathlib import Path
 import logging
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
+import json
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+import cloudscraper
+import time
 
 app = Flask(__name__)
-
-# Configure CORS for production
-if os.environ.get('FLASK_ENV') == 'production':
-    CORS(app, origins=['*'])  # Allow all origins for now
-else:
-    CORS(app)
+CORS(app)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Create downloads directory
-DOWNLOADS_DIR = Path("downloads")
+DOWNLOADS_DIR = Path('downloads')
 DOWNLOADS_DIR.mkdir(exist_ok=True)
 
-# Store download progress and file info
+# Global variables for tracking downloads
 download_progress = {}
 download_files = {}
 
-# Initialize Instaloader instance
-L = instaloader.Instaloader(
-    download_pictures=False,
-    download_videos=True,
-    download_video_thumbnails=False,
-    download_geotags=False,
-    download_comments=False,
-    save_metadata=False,
-    compress_json=False,
-    dirname_pattern=str(DOWNLOADS_DIR)
-)
-
 INSTAGRAM_COOKIES_FILE = 'cookies_insta.txt'
 
-# Load Instagram cookies if available
-if os.path.exists(INSTAGRAM_COOKIES_FILE):
+# Initialize Selenium WebDriver for Instagram scraping
+def get_webdriver():
+    """Get configured Chrome WebDriver for Instagram scraping"""
+    chrome_options = Options()
+    chrome_options.add_argument('--headless')  # Run in background
+    chrome_options.add_argument('--no-sandbox')
+    chrome_options.add_argument('--disable-dev-shm-usage')
+    chrome_options.add_argument('--disable-gpu')
+    chrome_options.add_argument('--window-size=1920,1080')
+    chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+    
     try:
-        # Parse cookies from file and load them properly
-        cookies = {}
-        with open(INSTAGRAM_COOKIES_FILE, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '\t' in line:
-                    parts = line.split('\t')
-                    if len(parts) >= 7:
-                        cookie_name = parts[5]
-                        cookie_value = parts[6]
-                        cookies[cookie_name] = cookie_value
-        
-        # Load session with proper cookies
-        if 'sessionid' in cookies and cookies['sessionid']:
-            L.load_session_from_file('instagram_session', cookies)
-            logger.info("Loaded Instagram session with cookies from file")
-        else:
-            logger.warning("No sessionid found in cookies file - trying with available cookies")
-            # Try to use available cookies even without sessionid
-            if cookies:
-                L.context.load_cookies_from_file(INSTAGRAM_COOKIES_FILE)
-                logger.info("Loaded Instagram cookies without sessionid")
-            else:
-                logger.warning("No cookies found in file")
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        return driver
     except Exception as e:
-        logger.warning(f"Could not load Instagram cookies: {e}")
+        logger.error(f"Failed to initialize WebDriver: {e}")
+        return None
+
+# Initialize cloudscraper for API requests
+scraper = cloudscraper.create_scraper()
 
 def is_instagram_url(url):
     """Check if URL is from Instagram"""
@@ -82,7 +65,6 @@ def is_instagram_url(url):
 
 def get_instagram_post_id(url):
     """Extract Instagram post ID from URL"""
-    # Handle different Instagram URL formats
     patterns = [
         r'instagram.com/p/([^/]+)',
         r'instagram.com/reel/([^/]+)',
@@ -97,26 +79,22 @@ def get_instagram_post_id(url):
 
 def sanitize_filename(filename):
     """Sanitize filename for safe file system usage"""
-    # Remove or replace invalid characters
     filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
-    # Remove extra spaces and limit length
     filename = re.sub(r'\s+', ' ', filename).strip()
-    return filename[:100]  # Limit to 100 characters
+    return filename[:100]
 
 def get_video_info(url):
     """Extract video information without downloading"""
-    # Check if it's an Instagram URL
     if is_instagram_url(url):
         return get_instagram_info(url)
     
     # Use yt-dlp for other platforms
     ydl_opts = {
-        'quiet': False,  # Enable logging for debugging
-        'no_warnings': False,  # Show warnings
+        'quiet': False,
+        'no_warnings': False,
         'extract_flat': False,
     }
     
-    # Only use cookies if the file exists
     if os.path.exists('cookies.txt'):
         ydl_opts['cookiefile'] = 'cookies.txt'
     
@@ -127,17 +105,12 @@ def get_video_info(url):
             info = ydl.extract_info(url, download=False)
             logger.info(f"Video info extracted successfully: {info.get('title', 'Unknown')}")
             
-            # Get all available formats
             formats = info.get('formats', [])
-            
-            # Filter and process formats
             processed_formats = []
             for fmt in formats:
-                # Skip formats without extension or with audio-only
                 if not fmt.get('ext') or fmt.get('vcodec') == 'none':
                     continue
                     
-                # Include common video formats
                 if fmt.get('ext') in ['mp4', 'webm', 'mkv', 'avi', 'mov', 'flv', '3gp']:
                     has_audio = fmt.get('acodec') and fmt.get('acodec') != 'none'
                     processed_formats.append({
@@ -152,9 +125,7 @@ def get_video_info(url):
                         'has_audio': has_audio,
                     })
             
-            # If no formats found, try to get at least one format
             if not processed_formats and formats:
-                # Take the first format with video
                 for fmt in formats:
                     if fmt.get('vcodec') and fmt.get('vcodec') != 'none':
                         processed_formats.append({
@@ -180,77 +151,108 @@ def get_video_info(url):
         return None
 
 def get_instagram_info(url):
-    """Get Instagram post information"""
+    """Get Instagram post information using Selenium"""
     try:
-        post_id = get_instagram_post_id(url)
-        if not post_id:
-            raise Exception("Could not extract Instagram post ID from URL")
+        driver = get_webdriver()
+        if not driver:
+            raise Exception("Failed to initialize WebDriver")
         
-        logger.info(f"Getting Instagram info for post ID: {post_id}")
+        logger.info(f"Getting Instagram info for URL: {url}")
         
-        # Try to load session if available
-        if os.path.exists('instagram_session'):
-            try:
-                L.load_session_from_file('instagram_session')
-                logger.info("Loaded Instagram session from file")
-            except Exception as e:
-                logger.warning(f"Could not load Instagram session: {e}")
-        # Get post info
+        # Load cookies if available
+        if os.path.exists(INSTAGRAM_COOKIES_FILE):
+            driver.get("https://www.instagram.com")
+            cookies = {}
+            with open(INSTAGRAM_COOKIES_FILE, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '\t' in line:
+                        parts = line.split('\t')
+                        if len(parts) >= 7:
+                            cookie_name = parts[5]
+                            cookie_value = parts[6]
+                            if cookie_name.startswith('#HttpOnly_'):
+                                cookie_name = cookie_name[10:]
+                            cookies[cookie_name] = cookie_value
+            
+            for name, value in cookies.items():
+                driver.add_cookie({'name': name, 'value': value})
+        
+        # Navigate to the post
+        driver.get(url)
+        time.sleep(3)  # Wait for page to load
+        
+        # Check if it's a video post
         try:
-            post = instaloader.Post.from_shortcode(L.context, post_id)
-        except Exception as post_error:
-            if "401" in str(post_error) or "Unauthorized" in str(post_error):
-                logger.error("Instagram authentication failed. Please check your session.")
-                raise Exception("Instagram authentication failed. Please try creating a new session or check your cookies.")
-            else:
-                raise post_error
-        
-        # Check if post has video
-        if not post.is_video:
-            raise Exception("This Instagram post does not contain a video")
-        
-        # Get video info
-        video_url = post.video_url
-        video_size = post.video_filesize if hasattr(post, 'video_filesize') else 0
-        
-        # Create format info similar to yt-dlp
-        format_info = {
-            'format_id': 'best',
-            'ext': 'mp4',
-            'filesize': video_size,
-            'height': post.video_height if hasattr(post, 'video_height') else 0,
-            'width': post.video_width if hasattr(post, 'video_width') else 0,
-            'format_note': 'Instagram Video',
-            'vcodec': 'h264',
-            'acodec': 'aac',
-            'has_audio': True,
-        }
-        
-        return {
-            'title': f"Instagram Post by {post.owner_username}",
-            'duration': 0,  # Instagram doesn't provide duration
-            'thumbnail': post.url if hasattr(post, 'url') else '',
-            'formats': [format_info],
-            'platform': 'instagram',
-            'post_id': post_id,
-            'owner_username': post.owner_username
-        }
+            video_element = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "video"))
+            )
+            video_url = video_element.get_attribute('src')
+            
+            if not video_url:
+                raise Exception("This Instagram post does not contain a video")
+            
+            # Get post caption
+            try:
+                caption_element = driver.find_element(By.CSS_SELECTOR, 'h1, ._a9zs')
+                caption = caption_element.text
+            except:
+                caption = "Instagram Post"
+            
+            # Get username
+            try:
+                username_element = driver.find_element(By.CSS_SELECTOR, 'a[href*="/p/"]')
+                username = username_element.text
+            except:
+                username = "unknown"
+            
+            # Get thumbnail
+            try:
+                img_element = driver.find_element(By.CSS_SELECTOR, 'img[src*="instagram"]')
+                thumbnail = img_element.get_attribute('src')
+            except:
+                thumbnail = ""
+            
+            format_info = {
+                'format_id': 'best',
+                'ext': 'mp4',
+                'filesize': 0,
+                'height': 0,
+                'width': 0,
+                'format_note': 'Instagram Video',
+                'vcodec': 'h264',
+                'acodec': 'aac',
+                'has_audio': True,
+            }
+            
+            return {
+                'title': caption,
+                'duration': 0,
+                'thumbnail': thumbnail,
+                'formats': [format_info],
+                'platform': 'instagram',
+                'post_id': get_instagram_post_id(url),
+                'owner_username': username,
+                'video_url': video_url
+            }
+            
+        except Exception as e:
+            raise Exception(f"Could not find video in Instagram post: {str(e)}")
         
     except Exception as e:
         logger.error(f"Error getting Instagram info: {str(e)}")
         raise Exception(f"Instagram error: {str(e)}")
+    finally:
+        if driver:
+            driver.quit()
 
 def download_video_advanced(url, format_type, title, download_id):
     """Download video with advanced format options"""
-    # Check if it's an Instagram URL
     if is_instagram_url(url):
         return download_instagram_video(url, format_type, title, download_id)
     
     # Use yt-dlp for other platforms
-    # Sanitize title for filename
     safe_title = sanitize_filename(title)
-    
-    # Generate unique filename with title
     unique_id = str(uuid.uuid4())[:8]
     output_template = str(DOWNLOADS_DIR / f"{safe_title}_{unique_id}.%(ext)s")
     
@@ -259,19 +261,14 @@ def download_video_advanced(url, format_type, title, download_id):
         'progress_hooks': [lambda d: progress_hook(d, download_id)],
     }
     
-    # Only use cookies if the file exists
     if os.path.exists('cookies.txt'):
         ydl_opts['cookiefile'] = 'cookies.txt'
     
-    # Configure format based on type - use simpler formats that don't require FFmpeg
     if format_type == 'best':
-        # Best quality that includes audio (single format)
         ydl_opts['format'] = 'best[ext=mp4]/best'
     elif format_type == 'video':
-        # High quality video with audio (single format)
         ydl_opts['format'] = 'best[ext=mp4]/best'
     elif format_type == 'audio':
-        # Audio only in best quality
         ydl_opts['format'] = 'bestaudio[ext=m4a]/bestaudio'
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
@@ -279,22 +276,18 @@ def download_video_advanced(url, format_type, title, download_id):
             'preferredquality': '192',
         }]
     elif format_type == 'video_only':
-        # Ultra HD video without audio (single format)
         ydl_opts['format'] = 'bestvideo[ext=mp4]/bestvideo'
     else:
-        # Default to best quality
         ydl_opts['format'] = 'best[ext=mp4]/best'
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             
-            # Find the downloaded file
             downloaded_files = list(DOWNLOADS_DIR.glob(f"{safe_title}_{unique_id}.*"))
             if downloaded_files:
                 file_path = str(downloaded_files[0])
                 
-                # Update download info
                 download_files[download_id] = {
                     'file_path': file_path,
                     'filename': os.path.basename(file_path),
@@ -304,12 +297,10 @@ def download_video_advanced(url, format_type, title, download_id):
                     'format_type': format_type
                 }
                 
-                # Mark as completed
                 download_progress[download_id]['completed'] = True
                 download_progress[download_id]['progress'] = 100
                 download_progress[download_id]['status'] = 'Download completed!'
                 
-                # Schedule file deletion after 30 minutes
                 threading.Timer(1800, delete_file, args=[download_id]).start()
                 
                 return file_path
@@ -321,68 +312,60 @@ def download_video_advanced(url, format_type, title, download_id):
         raise
 
 def download_instagram_video(url, format_type, title, download_id):
-    """Download Instagram video using Instaloader"""
+    """Download Instagram video using Selenium"""
     try:
-        post_id = get_instagram_post_id(url)
-        if not post_id:
-            raise Exception("Could not extract Instagram post ID from URL")
+        driver = get_webdriver()
+        if not driver:
+            raise Exception("Failed to initialize WebDriver")
         
-        logger.info(f"Downloading Instagram video for post ID: {post_id}")
+        logger.info(f"Downloading Instagram video for URL: {url}")
         
-        # Update progress
-        download_progress[download_id]['status'] = 'Connecting to Instagram...'
-        download_progress[download_id]['progress'] = 10
+        # Load cookies if available
+        if os.path.exists(INSTAGRAM_COOKIES_FILE):
+            driver.get("https://www.instagram.com")
+            cookies = {}
+            with open(INSTAGRAM_COOKIES_FILE, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '\t' in line:
+                        parts = line.split('\t')
+                        if len(parts) >= 7:
+                            cookie_name = parts[5]
+                            cookie_value = parts[6]
+                            if cookie_name.startswith('#HttpOnly_'):
+                                cookie_name = cookie_name[10:]
+                            cookies[cookie_name] = cookie_value
+            
+            for name, value in cookies.items():
+                driver.add_cookie({'name': name, 'value': value})
         
-        # Try to load session if available
-        if os.path.exists('instagram_session'):
-            try:
-                L.load_session_from_file('instagram_session')
-                logger.info("Loaded Instagram session from file")
-            except Exception as e:
-                logger.warning(f"Could not load Instagram session: {e}")
-        # Get post
-        download_progress[download_id]['status'] = 'Getting post information...'
-        download_progress[download_id]['progress'] = 30
+        # Navigate to the post
+        driver.get(url)
+        time.sleep(3)
         
-        try:
-            post = instaloader.Post.from_shortcode(L.context, post_id)
-        except Exception as post_error:
-            if "401" in str(post_error) or "Unauthorized" in str(post_error):
-                logger.error("Instagram authentication failed during download. Please check your session.")
-                raise Exception("Instagram authentication failed. Please try creating a new session or check your cookies.")
-            else:
-                raise post_error
+        # Find video element
+        video_element = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.TAG_NAME, "video"))
+        )
+        video_url = video_element.get_attribute('src')
         
-        if not post.is_video:
+        if not video_url:
             raise Exception("This Instagram post does not contain a video")
         
-        # Update progress
-        download_progress[download_id]['status'] = 'Preparing download...'
-        download_progress[download_id]['progress'] = 50
-        
-        # Generate filename
+        # Download the video
         safe_title = sanitize_filename(title)
         unique_id = str(uuid.uuid4())[:8]
         filename = f"{safe_title}_{unique_id}.mp4"
         file_path = str(DOWNLOADS_DIR / filename)
         
-        # Download video
-        download_progress[download_id]['status'] = 'Downloading video...'
-        download_progress[download_id]['progress'] = 70
-        
-        # Download the video file directly
-        import requests
-        video_response = requests.get(post.video_url, stream=True)
-        video_response.raise_for_status()
+        # Use cloudscraper to download the video
+        response = scraper.get(video_url, stream=True)
+        response.raise_for_status()
         
         with open(file_path, 'wb') as f:
-            for chunk in video_response.iter_content(chunk_size=8192):
+            for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     f.write(chunk)
-        
-        # Update progress
-        download_progress[download_id]['status'] = 'Processing...'
-        download_progress[download_id]['progress'] = 90
         
         # Update download info
         download_files[download_id] = {
@@ -403,49 +386,48 @@ def download_instagram_video(url, format_type, title, download_id):
         # Schedule file deletion after 30 minutes
         threading.Timer(1800, delete_file, args=[download_id]).start()
         
-        logger.info(f"Instagram video downloaded successfully: {file_path}")
         return file_path
         
     except Exception as e:
         logger.error(f"Error downloading Instagram video: {str(e)}")
         download_progress[download_id]['error'] = str(e)
         raise
+    finally:
+        if driver:
+            driver.quit()
 
 def progress_hook(d, download_id):
-    """Progress hook for yt-dlp"""
+    """Progress hook for yt-dlp downloads"""
     if download_id in download_progress:
         if d['status'] == 'downloading':
-            # Calculate progress percentage
-            total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
-            downloaded = d.get('downloaded_bytes', 0)
-            
-            if total > 0:
-                progress = min(int((downloaded / total) * 100), 99)
-                download_progress[download_id]['progress'] = progress
-                download_progress[download_id]['status'] = f'Downloading... {progress}%'
-            else:
-                download_progress[download_id]['status'] = 'Downloading...'
-        
+            try:
+                total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+                downloaded = d.get('downloaded_bytes', 0)
+                if total > 0:
+                    progress = int((downloaded / total) * 100)
+                    download_progress[download_id]['progress'] = progress
+                    download_progress[download_id]['status'] = f"Downloading... {progress}%"
+            except:
+                pass
         elif d['status'] == 'finished':
             download_progress[download_id]['status'] = 'Processing...'
-            download_progress[download_id]['progress'] = 95
 
 def delete_file(download_id):
-    """Delete file after 30 minutes"""
+    """Delete file after specified time"""
     if download_id in download_files:
-        file_info = download_files[download_id]
-        file_path = file_info['file_path']
-        
         try:
+            file_path = download_files[download_id]['file_path']
             if os.path.exists(file_path):
                 os.remove(file_path)
                 logger.info(f"Deleted file: {file_path}")
         except Exception as e:
-            logger.error(f"Error deleting file {file_path}: {str(e)}")
-        
-        # Clean up tracking data
-        download_files.pop(download_id, None)
-        download_progress.pop(download_id, None)
+            logger.error(f"Error deleting file: {e}")
+        finally:
+            # Clean up tracking
+            if download_id in download_files:
+                del download_files[download_id]
+            if download_id in download_progress:
+                del download_progress[download_id]
 
 @app.route('/api/info', methods=['POST'])
 def get_info():
@@ -572,59 +554,6 @@ def serve_file(download_id):
     except Exception as e:
         logger.error(f"Error serving file: {str(e)}")
         return jsonify({'error': str(e)}), 500
-
-@app.route('/api/instagram/session', methods=['POST'])
-def create_instagram_session():
-    """Create Instagram session for authenticated downloads"""
-    try:
-        data = request.get_json()
-        username = data.get('username')
-        password = data.get('password')
-        
-        if not username or not password:
-            return jsonify({'error': 'Username and password are required'}), 400
-        
-        logger.info(f"Creating Instagram session for user: {username}")
-        
-        # Login to Instagram
-        L.login(username, password)
-        
-        # Test login to ensure it worked
-        try:
-            test_user = L.test_login()
-            logger.info(f"Login test successful for user: {test_user}")
-        except Exception as test_error:
-            logger.warning(f"Login test failed: {test_error}")
-            # Continue anyway as the login might still work
-        
-        # Save session
-        L.save_session_to_file('instagram_session')
-        
-        logger.info("Instagram session created successfully")
-        return jsonify({'message': 'Instagram session created successfully'})
-        
-    except Exception as e:
-        logger.error(f"Error creating Instagram session: {str(e)}")
-        return jsonify({'error': f'Failed to create session: {str(e)}'}), 500
-
-@app.route('/api/instagram/test', methods=['GET'])
-def test_instagram_session():
-    """Test Instagram session authentication"""
-    try:
-        # Try to test login
-        test_user = L.test_login()
-        return jsonify({
-            'status': 'authenticated',
-            'username': test_user,
-            'message': 'Instagram session is valid'
-        })
-    except Exception as e:
-        logger.error(f"Instagram session test failed: {str(e)}")
-        return jsonify({
-            'status': 'not_authenticated',
-            'error': str(e),
-            'message': 'Instagram session is invalid or expired'
-        }), 401
 
 @app.route('/api/health', methods=['GET'])
 def health_check():

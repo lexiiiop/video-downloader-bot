@@ -1,7 +1,8 @@
 Flask==2.3.3
 Flask-CORS==4.0.0
-yt-dlp==2025.6.30
-requests==2.31.0
+yt-dlp==2023.12.30
 python-dotenv==1.0.0
 urllib3==2.0.7
-instaloader==4.14.1 
+selenium==4.34.2
+cloudscraper==1.2.71
+webdriver-manager==4.0.2 
